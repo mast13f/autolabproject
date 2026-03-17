@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="2">
+<title>DOE Campaign Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f172a; color: #e2e8f0; padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #334155;
+  }
+  .header h1 { font-size: 24px; color: #f8fafc; }
+  .header .status {
+    padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600;
+  }
+  .status-running { background: #065f46; color: #6ee7b7; }
+  .status-converged { background: #1e3a5f; color: #7dd3fc; }
+  .status-capped { background: #78350f; color: #fcd34d; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card {
+    background: #1e293b; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155;
+  }
+  .card .label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .card .value { font-size: 28px; font-weight: 700; color: #f8fafc; }
+  .card .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
+  .card.highlight { border-color: #3b82f6; }
+  .card.highlight .value { color: #60a5fa; }
+  .card.best { border-color: #10b981; }
+  .card.best .value { color: #34d399; }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: #1e293b; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155;
+  }
+  .panel h2 { font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
+
+  .next-params { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .next-param {
+    background: #0f172a; border-radius: 8px; padding: 12px;
+    border: 1px solid #334155;
+  }
+  .next-param .name { font-size: 11px; color: #64748b; margin-bottom: 2px; }
+  .next-param .val { font-size: 20px; font-weight: 600; color: #fbbf24; }
+
+  .stop-criteria { list-style: none; }
+  .stop-criteria li {
+    padding: 10px 12px; margin-bottom: 8px; border-radius: 8px;
+    background: #0f172a; border: 1px solid #334155; font-size: 13px;
+  }
+  .stop-criteria .label-tag {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; margin-right: 8px;
+  }
+  .tag-active { background: #065f46; color: #6ee7b7; }
+  .tag-triggered { background: #7c2d12; color: #fdba74; }
+  .tag-waiting { background: #1e293b; color: #64748b; }
+
+  .chart-container {
+    background: #1e293b; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155; margin-bottom: 24px;
+  }
+  .chart-container h2 { font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
+  canvas { width: 100% !important; height: 300px !important; }
+
+  .table-container {
+    background: #1e293b; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155; overflow-x: auto;
+  }
+  .table-container h2 { font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left; padding: 10px 12px; color: #94a3b8; font-weight: 600;
+    border-bottom: 2px solid #334155; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.5px; position: sticky; top: 0; background: #1e293b;
+  }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid #1e293b; }
+  tbody tr { background: #0f172a; }
+  tbody tr:hover { background: #1e293b; }
+  tbody tr.best-row { background: #052e16; }
+  tbody tr.best-row td { color: #34d399; font-weight: 600; }
+  .phase-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600;
+  }
+  .phase-initial { background: #1e3a5f; color: #7dd3fc; }
+  .phase-bo { background: #3b1f6e; color: #c4b5fd; }
+
+  .bar-cell { position: relative; }
+  .bar-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    opacity: 0.15; border-radius: 4px;
+  }
+
+  .qc-section {
+    background: #1e293b; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155; margin-bottom: 24px;
+  }
+  .qc-section h2 { font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
+  .qc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .qc-item {
+    background: #0f172a; border-radius: 8px; padding: 14px;
+    border: 1px solid #334155; display: flex; align-items: flex-start; gap: 12px;
+  }
+  .qc-icon {
+    width: 32px; height: 32px; border-radius: 8px; display: flex;
+    align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;
+  }
+  .qc-pass { background: #065f46; }
+  .qc-fail { background: #7c2d12; }
+  .qc-item .qc-name { font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 2px; }
+  .qc-item .qc-value { font-size: 12px; color: #94a3b8; }
+  .qc-item .qc-rationale { font-size: 11px; color: #64748b; margin-top: 4px; line-height: 1.4; }
+  .qc-item .qc-timing { font-size: 10px; color: #475569; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.3px; }
+
+  .qc-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 600;
+  }
+  .qc-badge-pass { background: #065f46; color: #6ee7b7; }
+  .qc-badge-info { background: #1e3a5f; color: #7dd3fc; }
+
+  .footer {
+    text-align: center; padding: 16px; color: #475569; font-size: 12px;
+    margin-top: 16px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>DOE Campaign Dashboard</h1>
+  <span class="status status-capped">CAPPED</span>
+</div>
+
+<div class="cards">
+  <div class="card highlight">
+    <div class="label">Experiments Run</div>
+    <div class="value">20</div>
+    <div class="sub">of 20 max</div>
+  </div>
+  <div class="card best">
+    <div class="label">Best Accuracy</div>
+    <div class="value">98.4%</div>
+    <div class="sub">Iteration #1</div>
+  </div>
+  <div class="card">
+    <div class="label">Current Phase</div>
+    <div class="value" style="font-size:20px">Bayesian Opt</div>
+    <div class="sub">5 initial + BO</div>
+  </div>
+  <div class="card">
+    <div class="label">Mean Accuracy</div>
+    <div class="value">43.9%</div>
+    <div class="sub">across all experiments</div>
+  </div>
+  <div class="card">
+    <div class="label">Accuracy Std Dev</div>
+    <div class="value">28.1</div>
+    <div class="sub">variability measure</div>
+  </div>
+  <div class="card">
+    <div class="label">Latest EI</div>
+    <div class="value">0.2563</div>
+    <div class="sub">expected improvement</div>
+  </div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <h2>Next Suggested Parameters</h2>
+    <div style="color:#64748b;padding:20px;text-align:center">Waiting for first BO iteration...</div>
+  </div>
+  <div class="panel">
+    <h2>Stopping Criteria</h2>
+    <ul class="stop-criteria">
+      <li>
+        <span class="label-tag tag-waiting">NOT MET</span>
+        Accuracy improvement &lt; 1.0% over 5 BO iterations
+      </li>
+      <li>
+        <span class="label-tag tag-triggered">TRIGGERED</span>
+        Experiment cap at 20 total experiments
+      </li>
+    </ul>
+    <div style="margin-top:16px">
+      <h2>Best Parameters Found</h2>
+      <div class="next-params" style="margin-top:8px"><div class="next-param"><div class="name">aspirate_speed</div><div class="val" style="color:#34d399">76.23</div></div><div class="next-param"><div class="name">dispense_speed</div><div class="val" style="color:#34d399">40.98</div></div><div class="next-param"><div class="name">air_gap</div><div class="val" style="color:#34d399">0</div></div><div class="next-param"><div class="name">blow_out</div><div class="val" style="color:#34d399">1</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="qc-section">
+  <h2>Quality Control Metrics</h2>
+  <h3 style="font-size:12px;color:#64748b;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px">Pre-Experiment Checks</h3>
+  <div class="qc-grid">
+    <div class="qc-item">
+      <div class="qc-icon qc-pass">&#10003;</div>
+      <div>
+        <div class="qc-name">Opentron Calibrated</div>
+        <div class="qc-value">Calibrated 11 days ago</div>
+        <div class="qc-rationale">If the Opentrons is not calibrated properly, it could cause problems like not picking up tips or not aspirating/dispensing at the right height.</div>
+        <div class="qc-timing">Before experiment begins</div>
+      </div>
+    </div>
+    <div class="qc-item">
+      <div class="qc-icon qc-pass">&#10003;</div>
+      <div>
+        <div class="qc-name">Pipette Tips Condition</div>
+        <div class="qc-value">8/8 tips in good condition</div>
+        <div class="qc-rationale">If the pipette tips are in bad condition they may not properly aspirate or dispense liquid, leading to skewed results.</div>
+        <div class="qc-timing">Before experiment begins</div>
+      </div>
+    </div>
+    <div class="qc-item">
+      <div class="qc-icon qc-pass">&#10003;</div>
+      <div>
+        <div class="qc-name">Liquid Is Dyed</div>
+        <div class="qc-value">Dye concentration: 0.88 mg/mL</div>
+        <div class="qc-rationale">If the liquid is not dyed, accuracy measurement may be off since it would be difficult to detect remaining liquid in the tips.</div>
+        <div class="qc-timing">Before experiment begins</div>
+      </div>
+    </div>
+  </div>
+  <h3 style="font-size:12px;color:#64748b;margin:16px 0 12px;text-transform:uppercase;letter-spacing:0.5px">Per-Iteration Checks (Latest)</h3>
+  <div class="qc-grid">
+    <div class="qc-item">
+      <div class="qc-icon qc-pass">&#10003;</div>
+      <div>
+        <div class="qc-name">Liquid in Tips Before Pipetting <span style="color:#475569;font-size:11px">(Iter #19)</span></div>
+        <div class="qc-value">No liquid detected</div>
+      </div>
+    </div>
+    <div class="qc-item">
+      <div class="qc-icon qc-pass">&#10003;</div>
+      <div>
+        <div class="qc-name">Liquid in Tips After Dispensing <span style="color:#475569;font-size:11px">(Iter #19)</span></div>
+        <div class="qc-value">Trace amount detected</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="chart-container">
+  <h2>Accuracy vs. Iteration</h2>
+  <canvas id="chart"></canvas>
+</div>
+
+<div class="table-container">
+  <h2>Experiment Log</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>Phase</th><th>Aspirate Speed</th><th>Dispense Speed</th>
+        <th>Air Gap</th><th>Blow Out</th><th>Accuracy</th><th>EI</th><th>Best So Far</th>
+        <th>Pre-Pipette Check</th><th>Post-Dispense Check</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+          <td>0</td>
+          <td><span class="phase-badge phase-initial">INITIAL</span></td>
+          <td>9.04</td>
+          <td>102.44</td>
+          <td>1</td>
+          <td>0</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:26.58619354836175%;background:#7dd3fc"></div>
+            26.59
+          </td>
+          <td>-</td>
+          <td>26.59</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Moderate amount detected</span></td>
+        </tr>
+<tr class="best-row">
+          <td>1</td>
+          <td><span class="phase-badge phase-initial">INITIAL</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:98.40748326534288%;background:#34d399"></div>
+            98.41
+          </td>
+          <td>-</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+        </tr>
+<tr>
+          <td>2</td>
+          <td><span class="phase-badge phase-initial">INITIAL</span></td>
+          <td>114.88</td>
+          <td>21.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:88.83482431795149%;background:#7dd3fc"></div>
+            88.83
+          </td>
+          <td>-</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Trace amount detected</span></td>
+        </tr>
+<tr>
+          <td>3</td>
+          <td><span class="phase-badge phase-initial">INITIAL</span></td>
+          <td>174.25</td>
+          <td>127.09</td>
+          <td>1</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:54.796709271740006%;background:#7dd3fc"></div>
+            54.80
+          </td>
+          <td>-</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Small amount detected</span></td>
+        </tr>
+<tr>
+          <td>4</td>
+          <td><span class="phase-badge phase-initial">INITIAL</span></td>
+          <td>137.82</td>
+          <td>197.45</td>
+          <td>0</td>
+          <td>0</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:27.709687515989103%;background:#7dd3fc"></div>
+            27.71
+          </td>
+          <td>-</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Small amount detected</span></td>
+        </tr>
+<tr>
+          <td>5</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>21.48</td>
+          <td>7.82</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:55.421852492931535%;background:#c4b5fd"></div>
+            55.42
+          </td>
+          <td>4.1776</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Trace amount detected</span></td>
+        </tr>
+<tr>
+          <td>6</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>94.35</td>
+          <td>60.89</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:39.94886421278139%;background:#c4b5fd"></div>
+            39.95
+          </td>
+          <td>3.9577</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Moderate amount detected</span></td>
+        </tr>
+<tr>
+          <td>7</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>93.59</td>
+          <td>25.2</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:16.45166057703682%;background:#c4b5fd"></div>
+            16.45
+          </td>
+          <td>0.6137</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Moderate amount detected</span></td>
+        </tr>
+<tr>
+          <td>8</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:45.54056079408768%;background:#c4b5fd"></div>
+            45.54
+          </td>
+          <td>0.8449</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Small amount detected</span></td>
+        </tr>
+<tr>
+          <td>9</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:82.22389926258171%;background:#c4b5fd"></div>
+            82.22
+          </td>
+          <td>0.3488</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+        </tr>
+<tr>
+          <td>10</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:26.62998731429138%;background:#c4b5fd"></div>
+            26.63
+          </td>
+          <td>0.9204</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Moderate amount detected</span></td>
+        </tr>
+<tr>
+          <td>11</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:45.35196502926119%;background:#c4b5fd"></div>
+            45.35
+          </td>
+          <td>0.4017</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Small amount detected</span></td>
+        </tr>
+<tr>
+          <td>12</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:25.72602420632061%;background:#c4b5fd"></div>
+            25.73
+          </td>
+          <td>0.3034</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Small amount detected</span></td>
+        </tr>
+<tr>
+          <td>13</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>114.88</td>
+          <td>21.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:6.015586715594223%;background:#c4b5fd"></div>
+            6.02
+          </td>
+          <td>0.2427</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Small amount detected</span></td>
+        </tr>
+<tr>
+          <td>14</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:5.166510284260795%;background:#c4b5fd"></div>
+            5.17
+          </td>
+          <td>0.2510</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Moderate amount detected</span></td>
+        </tr>
+<tr>
+          <td>15</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:31.67275366034482%;background:#c4b5fd"></div>
+            31.67
+          </td>
+          <td>0.2421</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Small amount detected</span></td>
+        </tr>
+<tr>
+          <td>16</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:66.9868460830554%;background:#c4b5fd"></div>
+            66.99
+          </td>
+          <td>0.1893</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Trace amount detected</span></td>
+        </tr>
+<tr>
+          <td>17</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:3.384573331421681%;background:#c4b5fd"></div>
+            3.38
+          </td>
+          <td>0.2103</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Moderate amount detected</span></td>
+        </tr>
+<tr>
+          <td>18</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:74.33637957396928%;background:#c4b5fd"></div>
+            74.34
+          </td>
+          <td>0.2051</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+        </tr>
+<tr>
+          <td>19</td>
+          <td><span class="phase-badge phase-bo">BO</span></td>
+          <td>76.23</td>
+          <td>40.98</td>
+          <td>0</td>
+          <td>1</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:57.76401469915607%;background:#c4b5fd"></div>
+            57.76
+          </td>
+          <td>0.2563</td>
+          <td>98.41</td>
+          <td><span class="qc-badge qc-badge-pass">No liquid detected</span></td>
+          <td><span class="qc-badge qc-badge-info">Trace amount detected</span></td>
+        </tr>
+
+    </tbody>
+  </table>
+</div>
+
+<div class="footer">
+  Auto-refreshes every 2 seconds &middot; Last updated: <span id="ts"></span>
+  <script>document.getElementById('ts').textContent = new Date().toLocaleTimeString();</script>
+</div>
+
+<script>
+const DATA = {"accuracy": [26.58619354836175, 98.40748326534288, 88.83482431795149, 54.796709271740006, 27.709687515989103, 55.421852492931535, 39.94886421278139, 16.45166057703682, 45.54056079408768, 82.22389926258171, 26.62998731429138, 45.35196502926119, 25.72602420632061, 6.015586715594223, 5.166510284260795, 31.67275366034482, 66.9868460830554, 3.384573331421681, 74.33637957396928, 57.76401469915607], "best_so_far": [26.58619354836175, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288, 98.40748326534288], "colors": ["#7dd3fc", "#7dd3fc", "#7dd3fc", "#7dd3fc", "#7dd3fc", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd", "#c4b5fd"], "n_initial": 5};
+
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+const dpr = window.devicePixelRatio || 1;
+const rect = canvas.parentElement.getBoundingClientRect();
+canvas.width = rect.width * dpr;
+canvas.height = 300 * dpr;
+canvas.style.width = rect.width + 'px';
+canvas.style.height = '300px';
+ctx.scale(dpr, dpr);
+
+const W = rect.width, H = 300;
+const pad = {top:20, right:20, bottom:40, left:50};
+const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom;
+
+const n = DATA.accuracy.length;
+const xScale = n > 1 ? pw / (n - 1) : pw / 2;
+const yMin = 0, yMax = 100;
+
+function toX(i) { return pad.left + i * xScale; }
+function toY(v) { return pad.top + ph - (v - yMin) / (yMax - yMin) * ph; }
+
+// Grid
+ctx.strokeStyle = '#334155'; ctx.lineWidth = 0.5;
+for (let v = 0; v <= 100; v += 20) {
+  ctx.beginPath(); ctx.moveTo(pad.left, toY(v)); ctx.lineTo(W - pad.right, toY(v)); ctx.stroke();
+  ctx.fillStyle = '#64748b'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+  ctx.fillText(v + '%', pad.left - 8, toY(v) + 4);
+}
+
+// Phase boundary
+if (DATA.n_initial > 0 && DATA.n_initial < n) {
+  const bx = toX(DATA.n_initial - 0.5);
+  ctx.strokeStyle = '#475569'; ctx.lineWidth = 1; ctx.setLineDash([5, 5]);
+  ctx.beginPath(); ctx.moveTo(bx, pad.top); ctx.lineTo(bx, H - pad.bottom); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#64748b'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Initial | BO', bx, pad.top - 5);
+}
+
+// Best-so-far line
+ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2;
+ctx.beginPath();
+for (let i = 0; i < n; i++) {
+  const x = toX(i), y = toY(DATA.best_so_far[i]);
+  i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+}
+ctx.stroke();
+
+// Scatter points
+for (let i = 0; i < n; i++) {
+  const x = toX(i), y = toY(DATA.accuracy[i]);
+  ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2);
+  ctx.fillStyle = DATA.colors[i]; ctx.fill();
+  ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+// X axis labels
+ctx.fillStyle = '#64748b'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+const step = Math.max(1, Math.floor(n / 15));
+for (let i = 0; i < n; i += step) {
+  ctx.fillText(i, toX(i), H - pad.bottom + 20);
+}
+ctx.fillText('Iteration', W / 2, H - 5);
+
+// Legend
+ctx.fillStyle = '#7dd3fc'; ctx.beginPath(); ctx.arc(W - 200, pad.top + 10, 5, 0, Math.PI*2); ctx.fill();
+ctx.fillStyle = '#94a3b8'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+ctx.fillText('Initial', W - 190, pad.top + 14);
+ctx.fillStyle = '#c4b5fd'; ctx.beginPath(); ctx.arc(W - 130, pad.top + 10, 5, 0, Math.PI*2); ctx.fill();
+ctx.fillStyle = '#94a3b8'; ctx.fillText('BO', W - 120, pad.top + 14);
+ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2;
+ctx.beginPath(); ctx.moveTo(W - 80, pad.top + 10); ctx.lineTo(W - 55, pad.top + 10); ctx.stroke();
+ctx.fillStyle = '#94a3b8'; ctx.fillText('Best', W - 50, pad.top + 14);
+</script>
+
+</body>
+</html>
