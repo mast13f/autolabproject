@@ -22,7 +22,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 
 # ── Configuration ──────────────────────────────────────────────────────────
-CAMERA_INDEX = 0          # USB camera index (0 = first camera)
+CAMERA_INDEX = 1          # USB camera index (0 = first camera)
 PORT = 8080               # Port the server listens on
 SAVE_DIR = "./captured_images"  # Where images are saved
 # ───────────────────────────────────────────────────────────────────────────

@@ -1,11 +1,15 @@
 """
-OT-2 Transfer Protocol with Automatic Camera Capture
+OT-2 Water Transfer Protocol with Camera Capture
 
-Transfers 20 uL from reservoir (slot 4) to well plate columns (slot 7),
-taking a photo after every pick_up_tip, aspirate, dispense, and drop_tip.
+Adapted from Protocol Designer "optimalprojectprotocolwater.py".
+Transfers 20 uL from reservoir (slot 4) to well plate (slot 2),
+taking photos before and after every aspirate and dispense.
 
-The pipette moves to the camera slot and pauses before each capture
-so the image is clear (no vibration).
+Deck layout:
+  Slot 1: Tip rack (opentrons_96_filtertiprack_20ul)
+  Slot 2: Well plate (corning_96_wellplate_330ul)
+  Slot 4: Reservoir (agilent_1_reservoir_290ml)
+  Slot 7: Camera position (dummy labware for photo spot)
 
 Setup:
   1. Start camera_server.py on your computer first
@@ -17,9 +21,9 @@ from opentrons import protocol_api
 import json
 
 metadata = {
-    "protocolName": "Project - Auto Capture",
+    "protocolName": "Water Transfer - Camera",
     "author": "AutoLab",
-    "description": "Transfer with automatic camera capture after each action.",
+    "description": "Water transfer with camera capture before/after aspirate and dispense.",
 }
 requirements = {"robotType": "OT-2", "apiLevel": "2.18"}
 
@@ -71,13 +75,6 @@ def add_parameters(parameters: protocol_api.Parameters):
         minimum=1,
         maximum=10,
     )
-    parameters.add_int(
-        variable_name="extra_wait_seconds",
-        display_name="Extra Wait After Capture (seconds)",
-        default=3,
-        minimum=0,
-        maximum=10,
-    )
 
 
 # ── Camera Capture Helper ──────────────────────────────────────────────────
@@ -121,7 +118,6 @@ def run(protocol: protocol_api.ProtocolContext):
     params = protocol.params
 
     settle = params.settle_seconds
-    extra = params.extra_wait_seconds
     volume = params.transfer_volume
     num_cols = params.num_columns
 
@@ -129,10 +125,13 @@ def run(protocol: protocol_api.ProtocolContext):
     tip_rack = protocol.load_labware(
         "opentrons_96_filtertiprack_20ul", "1",
     )
-    reservoir = protocol.load_labware(
-        "agilent_1_reservoir_290ml", "5",
+    well_plate = protocol.load_labware(
+        "corning_96_wellplate_330ul", "2",
     )
-    # Camera position: dummy labware in slot 7 for photo
+    reservoir = protocol.load_labware(
+        "agilent_1_reservoir_290ml", "4",
+    )
+    # Camera position: dummy labware in slot 7 for photo spot
     camera_spot = protocol.load_labware(
         "corning_96_wellplate_360ul_flat", "7",
     )
@@ -143,58 +142,69 @@ def run(protocol: protocol_api.ProtocolContext):
     )
     pipette.configure_nozzle_layout(protocol_api.ALL, start="A1")
 
-    # ── Flow rates from original liquid class ──────────────────────────
+    # ── Flow rates matching original liquid class ─────────────────────
     ASPIRATE_RATE = 7.6    # uL/s
     DISPENSE_RATE = 26.0   # uL/s
     BLOWOUT_RATE = 31.0    # uL/s
 
-    # ── Helper: move to camera, wait, capture ──────────────────────────
+    # ── Helper: move to camera spot, wait, capture ────────────────────
     def move_and_capture(action, details=""):
         pipette.move_to(camera_spot["A1"].top(20))
         protocol.delay(seconds=settle)
         capture(action, details)
-        protocol.delay(seconds=extra)
 
-    # ── Define columns to process ──────────────────────────────────────
-    columns = [f"A{i}" for i in range(1, num_cols + 1)]
+    # ── Columns to dispense into ──────────────────────────────────────
+    dest_wells = [well_plate[f"A{i}"] for i in range(1, num_cols + 1)]
 
-    # ── Liquid ─────────────────────────────────────────────────────────
-    liquid = protocol.define_liquid("Water", display_color="#25b3ffff")
-    reservoir.load_liquid(wells=["A1"], liquid=liquid, volume=290000)
+    # ── PROTOCOL STEPS ────────────────────────────────────────────────
+    protocol.comment("=== Starting water transfer protocol with camera ===")
 
-    # ── PROTOCOL STEPS ─────────────────────────────────────────────────
-    # Pick up liquid from reservoir, take picture, drop it back, take picture
-    # Repeat for each column
-    protocol.comment("=== Starting aspirate-photo-dispense-photo protocol ===")
+    # ── Tip columns (one per transfer column) ───────────────────────
+    tip_columns = [tip_rack[f"A{i}"] for i in range(1, num_cols + 1)]
 
-    # Pick up tip once
-    pipette.pick_up_tip()
-    move_and_capture("pick_up_tip", "tips")
+    # Transfer to each column with fresh tips
+    for col_idx, dest in enumerate(dest_wells):
+        col_name = f"A{col_idx + 1}"
+        protocol.comment(f"--- Column {col_name} ({col_idx + 1}/{num_cols}) ---")
 
-    for col_idx, col in enumerate(columns):
-        protocol.comment(f"--- Column {col} ({col_idx + 1}/{num_cols}) ---")
+        # Pick up new tips
+        pipette.pick_up_tip(tip_columns[col_idx])
+        move_and_capture("pick_up_tip", f"col_{col_name}")
 
-        # Aspirate from reservoir
+        # Pre-wet tip (same as original liquid class: pre_wet=True)
+        pipette.aspirate(volume, reservoir["A1"].bottom(z=1), rate=ASPIRATE_RATE / pipette.flow_rate.aspirate)
+        pipette.dispense(volume, reservoir["A1"].bottom(z=1), rate=DISPENSE_RATE / pipette.flow_rate.dispense)
+
+        # ── BEFORE ASPIRATE ── photo of empty tips
+        move_and_capture("before_aspirate", f"col_{col_name}_tips_empty")
+
+        # ── ASPIRATE from reservoir ──
         pipette.aspirate(
             volume,
             reservoir["A1"].bottom(z=1),
             rate=ASPIRATE_RATE / pipette.flow_rate.aspirate,
         )
-        # Move to slot 7 and take picture (liquid in tips)
-        move_and_capture("aspirate", f"round_{col_idx+1}_liquid_in_tips")
 
-        # Dispense back into reservoir
+        # ── AFTER ASPIRATE ── photo of liquid in tips
+        move_and_capture("after_aspirate", f"col_{col_name}_liquid_in_tips")
+
+        # ── BEFORE DISPENSE ── photo before dispensing into well
+        move_and_capture("before_dispense", f"col_{col_name}_approaching_well")
+
+        # ── DISPENSE into well plate ──
         pipette.dispense(
             volume,
-            reservoir["A1"].bottom(z=1),
+            dest.bottom(z=0.3),
             rate=DISPENSE_RATE / pipette.flow_rate.dispense,
         )
-        pipette.blow_out(reservoir["A1"])
-        # Move to slot 7 and take picture (liquid returned)
-        move_and_capture("dispense", f"round_{col_idx+1}_liquid_returned")
+        # Blowout at destination (matching original liquid class)
+        pipette.blow_out(dest)
 
-    # Drop tip
-    pipette.drop_tip()
-    move_and_capture("drop_tip", "final")
+        # ── AFTER DISPENSE ── photo of empty tips after dispense
+        move_and_capture("after_dispense", f"col_{col_name}_liquid_dispensed")
+
+        # Drop tip
+        pipette.drop_tip()
+        move_and_capture("drop_tip", f"col_{col_name}")
 
     protocol.comment("=== Protocol complete ===")
