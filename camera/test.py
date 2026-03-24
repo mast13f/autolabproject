@@ -62,7 +62,7 @@ def add_parameters(parameters: protocol_api.Parameters):
     )
     parameters.add_int(
         variable_name="settle_seconds",
-        display_name="Settle Time (seconds)",
+        display_name="Settle Time (sec)",
         description="Wait time before capture for clear image",
         default=2,
         minimum=1,
@@ -70,7 +70,7 @@ def add_parameters(parameters: protocol_api.Parameters):
     )
     parameters.add_int(
         variable_name="extra_wait_seconds",
-        display_name="Extra Wait After Capture (seconds)",
+        display_name="Extra Wait (sec)",
         default=3,
         minimum=0,
         maximum=10,
@@ -152,14 +152,14 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(seconds=extra)
 
     # ── Liquid ─────────────────────────────────────────────────────────
-    liquid = protocol.define_liquid("Water", display_color="#25b3ffff")
-    reservoir.load_liquid(wells=["A1"], liquid=liquid, volume=290000)
+    liquid = protocol.define_liquid("Water", description="Water", display_color="#25b3ffff")
+    reservoir["A1"].load_liquid(liquid=liquid, volume=290000)
 
     # ── PROTOCOL STEPS ─────────────────────────────────────────────────
     protocol.comment("=== Starting test protocol ===")
 
-    # Pick up tips
-    pipette.pick_up_tip()
+    # Pick up tips from column 1
+    pipette.pick_up_tip(tip_rack["A1"])
     move_and_capture("pick_up_tip", "tips")
 
     # Aspirate-photo-dispense-photo loop
