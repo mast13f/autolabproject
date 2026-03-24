@@ -130,10 +130,7 @@ def run(protocol: protocol_api.ProtocolContext):
         "opentrons_96_filtertiprack_20ul", "1",
     )
     reservoir = protocol.load_labware(
-        "agilent_1_reservoir_290ml", "4",
-    )
-    well_plate = protocol.load_labware(
-        "corning_96_wellplate_330ul", "2",
+        "agilent_1_reservoir_290ml", "5",
     )
     # Camera position: dummy labware in slot 7 for photo
     camera_spot = protocol.load_labware(
@@ -166,17 +163,14 @@ def run(protocol: protocol_api.ProtocolContext):
     reservoir.load_liquid(wells=["A1"], liquid=liquid, volume=290000)
 
     # ── PROTOCOL STEPS ─────────────────────────────────────────────────
-    protocol.comment("=== Starting transfer protocol ===")
+    # Pick up liquid from reservoir, take picture, drop it back, take picture
+    # Repeat for each column
+    protocol.comment("=== Starting aspirate-photo-dispense-photo protocol ===")
 
-    # Pick up tip (once for all columns, matching original)
+    # Pick up tip once
     pipette.pick_up_tip()
-    move_and_capture("pick_up_tip", "column_A1")
+    move_and_capture("pick_up_tip", "tips")
 
-    # Pre-wet the tip (matching original liquid class pre_wet=True)
-    pipette.aspirate(volume, reservoir["A1"].bottom(z=1), rate=ASPIRATE_RATE / pipette.flow_rate.aspirate)
-    pipette.dispense(volume, reservoir["A1"].bottom(z=1), rate=DISPENSE_RATE / pipette.flow_rate.dispense)
-
-    # Transfer to each column
     for col_idx, col in enumerate(columns):
         protocol.comment(f"--- Column {col} ({col_idx + 1}/{num_cols}) ---")
 
@@ -186,19 +180,18 @@ def run(protocol: protocol_api.ProtocolContext):
             reservoir["A1"].bottom(z=1),
             rate=ASPIRATE_RATE / pipette.flow_rate.aspirate,
         )
-        move_and_capture("aspirate", f"col_{col}_from_reservoir")
+        # Move to slot 7 and take picture (liquid in tips)
+        move_and_capture("aspirate", f"round_{col_idx+1}_liquid_in_tips")
 
-        # Dispense into well plate
+        # Dispense back into reservoir
         pipette.dispense(
             volume,
-            well_plate[col].bottom(z=0.3),
+            reservoir["A1"].bottom(z=1),
             rate=DISPENSE_RATE / pipette.flow_rate.dispense,
         )
-
-        # Blowout at destination (matching original liquid class)
-        pipette.blow_out(well_plate[col])
-
-        move_and_capture("dispense", f"col_{col}_to_wellplate")
+        pipette.blow_out(reservoir["A1"])
+        # Move to slot 7 and take picture (liquid returned)
+        move_and_capture("dispense", f"round_{col_idx+1}_liquid_returned")
 
     # Drop tip
     pipette.drop_tip()
