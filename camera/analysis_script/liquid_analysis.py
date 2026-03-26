@@ -200,6 +200,111 @@ def detect_green_in_box(frame, box, hue_low=35, hue_high=85, sat_min=40, val_min
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# ENHANCED DETECTION — catches residual liquid that green/YOLO miss
+# ═══════════════════════════════════════════════════════════════════════════
+
+def enhance_image(roi):
+    """
+    Boost contrast and saturation to make faint liquid visible.
+    Returns enhanced BGR image.
+    """
+    # Convert to LAB and apply CLAHE (adaptive histogram equalization)
+    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+    lab[:, :, 0] = clahe.apply(lab[:, :, 0])
+    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+    # Boost saturation
+    hsv = cv2.cvtColor(enhanced, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 2.0, 0, 255)
+    hsv = hsv.astype(np.uint8)
+    enhanced = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+    return enhanced
+
+
+def detect_green_enhanced(frame, box, hue_low=30, hue_high=90, sat_min=20, val_min=30):
+    """
+    Enhanced green detection with:
+    1. Image enhancement (CLAHE + saturation boost)
+    2. Wider HSV range (catches faint/dilute green)
+    3. Lower thresholds
+    """
+    x1, y1, x2, y2 = box
+    roi = frame[y1:y2, x1:x2]
+    if roi.size == 0:
+        return 0.0
+
+    enhanced = enhance_image(roi)
+    hsv = cv2.cvtColor(enhanced, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, np.array([hue_low, sat_min, val_min]),
+                       np.array([hue_high, 255, 255]))
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    return np.count_nonzero(mask) / mask.size
+
+
+def detect_tip_end_droplet(frame, box, baseline_frame=None):
+    """
+    Focus specifically on the bottom 25% of the tip (where droplets hang).
+    Uses intensity difference — liquid at the tip end changes brightness
+    even when it's not green enough to detect.
+    """
+    x1, y1, x2, y2 = box
+    tip_height = y2 - y1
+    if tip_height <= 0:
+        return 0.0, 0.0
+
+    # Bottom 25% of the tip
+    bottom_start = y1 + int(tip_height * 0.75)
+    tip_end = frame[bottom_start:y2, x1:x2]
+    if tip_end.size == 0:
+        return 0.0, 0.0
+
+    # Method 1: Check for any color (not just green) — droplets refract light
+    gray = cv2.cvtColor(tip_end, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 30, 100)
+    edge_density = np.count_nonzero(edges) / edges.size
+
+    # Method 2: If baseline available, compare bottom of tip
+    diff_score = 0.0
+    if baseline_frame is not None:
+        base_end = baseline_frame[bottom_start:y2, x1:x2]
+        if base_end.shape == tip_end.shape:
+            diff = cv2.absdiff(
+                cv2.cvtColor(tip_end, cv2.COLOR_BGR2GRAY),
+                cv2.cvtColor(base_end, cv2.COLOR_BGR2GRAY),
+            )
+            diff_score = np.mean(diff) / 255.0
+
+    return edge_density, diff_score
+
+
+def detect_residual_by_baseline(frame, box, baseline_frame, threshold=15):
+    """
+    Compare current tip against the empty baseline at pixel level.
+    Uses a lower threshold than standard subtraction to catch faint residuals.
+    """
+    x1, y1, x2, y2 = box
+    roi = frame[y1:y2, x1:x2]
+    base_roi = baseline_frame[y1:y2, x1:x2]
+
+    if roi.shape != base_roi.shape or roi.size == 0:
+        return 0.0
+
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    base_gray = cv2.cvtColor(base_roi, cv2.COLOR_BGR2GRAY)
+    diff = cv2.absdiff(gray, base_gray)
+
+    _, mask = cv2.threshold(diff, threshold, 255, cv2.THRESH_BINARY)
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    return np.count_nonzero(mask) / mask.size
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # IMAGE CATEGORIZATION
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -281,8 +386,8 @@ def draw_annotated(frame, detections, tip_results, tip_green_data, action):
     tips_with_liquid_yolo = sum(1 for t in tip_results if t["has_liquid"])
     tips_with_green = sum(1 for g in tip_green_data if g[0] > 0.02)
     total_tips = len(tip_results)
-    status = f"{action} | YOLO: {tips_with_liquid_yolo}/{total_tips} | Green: {tips_with_green}/{total_tips}"
-    cv2.rectangle(out, (0, 0), (480, 30), (0, 0, 0), -1)
+    status = f"{action} | YOLO:{tips_with_liquid_yolo}/{total_tips} Green:{tips_with_green}/{total_tips}"
+    cv2.rectangle(out, (0, 0), (520, 30), (0, 0, 0), -1)
     cv2.putText(out, status, (10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
@@ -294,7 +399,7 @@ def draw_annotated(frame, detections, tip_results, tip_green_data, action):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def analyze(image_dir, output_dir, weights_path, conf=0.35, threshold=25):
-    """Combined YOLO + Green analysis pipeline."""
+    """Combined YOLO + Green + Enhanced analysis pipeline."""
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -305,8 +410,17 @@ def analyze(image_dir, output_dir, weights_path, conf=0.35, threshold=25):
     print("\n[1] Categorizing images...")
     categories = categorize_images(image_dir)
 
-    # 3. Analyze each image
-    print(f"\n[2] Analyzing images (yolo_conf={conf}, green_threshold={threshold})...")
+    # 3. Load baseline image (empty tips) for comparison
+    baseline_files = categories.get("pick_up_tip", []) or categories.get("before_aspirate", [])
+    baseline_img = None
+    if baseline_files:
+        baseline_img = cv2.imread(baseline_files[0])
+        print(f"\n[2] Baseline: {os.path.basename(baseline_files[0])}")
+    else:
+        print("\n[2] WARNING: No baseline image found — residual detection will be limited")
+
+    # 4. Analyze each image
+    print(f"\n[3] Analyzing images (yolo_conf={conf}, green_threshold={threshold})...")
     results = []
 
     analysis_categories = [
@@ -329,13 +443,40 @@ def analyze(image_dir, output_dir, weights_path, conf=0.35, threshold=25):
             num_tips = len(tip_results)
             yolo_liquid_count = sum(1 for t in tip_results if t["has_liquid"])
 
-            # ── Green Detection (inside each YOLO tip box) ──
+            # ── Per-tip: Green + Enhanced + Residual ──
             tip_green_data = []
+            tip_enhanced_data = []
+            tip_droplet_data = []
+            tip_residual_data = []
+
             for t in tip_results:
-                green_ratio, green_height, _ = detect_green_in_box(img, t["tip_box"])
+                box = t["tip_box"]
+
+                # Standard green
+                green_ratio, green_height, _ = detect_green_in_box(img, box)
                 tip_green_data.append((green_ratio, green_height))
 
+                # Enhanced green (wider HSV, boosted contrast)
+                enhanced_green = detect_green_enhanced(img, box)
+                tip_enhanced_data.append(enhanced_green)
+
+                # Tip-end droplet detection
+                edge_density, diff_score = detect_tip_end_droplet(
+                    img, box, baseline_img
+                )
+                tip_droplet_data.append((edge_density, diff_score))
+
+                # Baseline residual comparison
+                residual = 0.0
+                if baseline_img is not None:
+                    residual = detect_residual_by_baseline(
+                        img, box, baseline_img, threshold=15
+                    )
+                tip_residual_data.append(residual)
+
             green_liquid_count = sum(1 for g in tip_green_data if g[0] > 0.02)
+            enhanced_liquid_count = sum(1 for e in tip_enhanced_data if e > 0.15)
+            residual_liquid_count = sum(1 for r in tip_residual_data if r > 0.09)
 
             # ── Build result row ──
             row = {
@@ -345,22 +486,45 @@ def analyze(image_dir, output_dir, weights_path, conf=0.35, threshold=25):
                 "tips_detected": num_tips,
                 "yolo_liquid_tips": yolo_liquid_count,
                 "green_liquid_tips": green_liquid_count,
+                "enhanced_liquid_tips": enhanced_liquid_count,
+                "residual_liquid_tips": residual_liquid_count,
             }
 
-            # Combined verdict: green is primary, YOLO is secondary
+            # Combined verdict — uses ALL methods
             avg_green = np.mean([g[0] for g in tip_green_data]) if tip_green_data else 0.0
-            row["liquid_detected"] = "YES" if (avg_green > 0.02 or yolo_liquid_count > num_tips // 2) else "NO"
+            avg_enhanced = np.mean(tip_enhanced_data) if tip_enhanced_data else 0.0
+            avg_residual = np.mean(tip_residual_data) if tip_residual_data else 0.0
+
+            liquid_signals = 0
+            if avg_green > 0.02:
+                liquid_signals += 2      # Green is strong signal
+            if yolo_liquid_count > num_tips // 2:
+                liquid_signals += 2      # YOLO majority is strong
+            if avg_enhanced > 0.15:
+                liquid_signals += 1      # Enhanced catches faint green
+            if avg_residual > 0.09:
+                liquid_signals += 1      # Residual vs baseline
+
+            row["liquid_detected"] = "YES" if liquid_signals >= 2 else "NO"
+            row["confidence_score"] = liquid_signals
 
             # Per-tip data
             for i, t in enumerate(tip_results):
                 n = t["tip_num"]
                 g_ratio, g_height = tip_green_data[i] if i < len(tip_green_data) else (0.0, 0.0)
+                enh = tip_enhanced_data[i] if i < len(tip_enhanced_data) else 0.0
+                edge, diff = tip_droplet_data[i] if i < len(tip_droplet_data) else (0.0, 0.0)
+                resid = tip_residual_data[i] if i < len(tip_residual_data) else 0.0
 
                 row[f"tip_{n}_yolo_liquid"] = "YES" if t["has_liquid"] else "NO"
                 row[f"tip_{n}_yolo_fill"] = f"{t['fill_ratio']:.4f}"
                 row[f"tip_{n}_yolo_conf"] = f"{t['liquid_conf']:.4f}"
                 row[f"tip_{n}_green_ratio"] = f"{g_ratio:.4f}"
                 row[f"tip_{n}_green_height"] = f"{g_height:.4f}"
+                row[f"tip_{n}_enhanced_green"] = f"{enh:.4f}"
+                row[f"tip_{n}_edge_density"] = f"{edge:.4f}"
+                row[f"tip_{n}_baseline_diff"] = f"{diff:.4f}"
+                row[f"tip_{n}_residual"] = f"{resid:.4f}"
 
             # Summary stats
             if tip_results:
@@ -370,6 +534,8 @@ def analyze(image_dir, output_dir, weights_path, conf=0.35, threshold=25):
                 row["avg_yolo_fill"] = "0.0000"
                 row["max_yolo_fill"] = "0.0000"
             row["avg_green"] = f"{avg_green:.4f}"
+            row["avg_enhanced_green"] = f"{avg_enhanced:.4f}"
+            row["avg_residual"] = f"{avg_residual:.4f}"
 
             results.append(row)
 
@@ -378,12 +544,16 @@ def analyze(image_dir, output_dir, weights_path, conf=0.35, threshold=25):
             ann_path = os.path.join(output_dir, f"annotated_{os.path.basename(filepath)}")
             cv2.imwrite(ann_path, annotated)
 
+            # ── Save enhanced view for debugging ──
+            if tip_results:
+                enh_img = enhance_image(img)
+                enh_path = os.path.join(output_dir, f"enhanced_{os.path.basename(filepath)}")
+                cv2.imwrite(enh_path, enh_img)
+
             # ── Print status ──
-            if row["liquid_detected"] == "YES":
-                status = f"LIQUID (yolo={yolo_liquid_count}/{num_tips}, green={green_liquid_count}/{num_tips})"
-            else:
-                status = f"empty  (yolo={yolo_liquid_count}/{num_tips}, green={green_liquid_count}/{num_tips})"
-            print(f"  {cat:20s} | col {column:4s} | {status}")
+            verdict = row["liquid_detected"]
+            score = row["confidence_score"]
+            print(f"  {cat:20s} | col {column:4s} | {verdict} (score={score}) | yolo={yolo_liquid_count} green={green_liquid_count} enh={enhanced_liquid_count} resid={residual_liquid_count}")
 
     # 4. Save CSV
     if results:
@@ -420,7 +590,9 @@ def analyze(image_dir, output_dir, weights_path, conf=0.35, threshold=25):
             total = len(cat_results)
             avg_fill = np.mean([float(r["avg_yolo_fill"]) for r in cat_results])
             avg_grn = np.mean([float(r["avg_green"]) for r in cat_results])
-            print(f"  {cat:20s}: {liquid_count}/{total} liquid | yolo_fill={avg_fill:.4f} | green={avg_grn:.4f}")
+            avg_enh = np.mean([float(r["avg_enhanced_green"]) for r in cat_results])
+            avg_res = np.mean([float(r["avg_residual"]) for r in cat_results])
+            print(f"  {cat:20s}: {liquid_count}/{total} liquid | green={avg_grn:.4f} | enhanced={avg_enh:.4f} | residual={avg_res:.4f} | yolo={avg_fill:.4f}")
 
     print("\nExpected vs Detected:")
     correct = 0
