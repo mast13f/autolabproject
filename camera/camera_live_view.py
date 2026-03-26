@@ -5,7 +5,7 @@ Press 'q' to quit.
 
 import cv2
 
-CAMERA_INDEX = 0
+CAMERA_INDEX = 1
 
 cap = cv2.VideoCapture(CAMERA_INDEX)
 if not cap.isOpened():
