@@ -75,6 +75,14 @@ def add_parameters(parameters: protocol_api.Parameters):
         minimum=1,
         maximum=10,
     )
+    parameters.add_int(
+        variable_name="camera_height_mm",
+        display_name="Camera Height (mm)",
+        description="Height above slot 7 plate top for photo",
+        default=1,
+        minimum=-10,
+        maximum=80,
+    )
 
 
 # ── Camera Capture Helper ──────────────────────────────────────────────────
@@ -120,6 +128,7 @@ def run(protocol: protocol_api.ProtocolContext):
     settle = params.settle_seconds
     volume = params.transfer_volume
     num_cols = params.num_columns
+    cam_height = params.camera_height_mm
 
     # ── Load Labware ───────────────────────────────────────────────────
     tip_rack = protocol.load_labware(
@@ -149,7 +158,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # ── Helper: move to camera spot, wait, capture ────────────────────
     def move_and_capture(action, details=""):
-        pipette.move_to(camera_spot["A1"].top(20))
+        pipette.move_to(camera_spot["A1"].top(cam_height))
         protocol.delay(seconds=settle)
         capture(action, details)
 
