@@ -165,24 +165,29 @@ CAMERA_SERVER_PORT = 8080
 ## OT-2 Deck Layout
 
 ```
-  ┌────────┬────────┬────────┐
-  │ Slot 7 │ Slot 8 │ Slot 9 │  ← back (away from you)
-  │  CAM   │  ---   │  ---   │
-  ├────────┼────────┼────────┤
-  │ Slot 4 │ Slot 5 │ Slot 6 │
-  │  RES   │  ---   │  ---   │
-  ├────────┼────────┼────────┤
-  │ Slot 1 │ Slot 2 │ Slot 3 │  ← front (closest to you)
-  │  TIP   │  PLT   │  ---   │
-  └────────┴────────┴────────┘
+  ┌─────────┬─────────┬─────────┐
+  │ Slot 10 │ Slot 11 │  TRASH  │  ← top row (back of robot)
+  │   ---   │   ---   │  fixed  │
+  ├─────────┼─────────┼─────────┤
+  │  Slot 7 │  Slot 8 │  Slot 9 │
+  │   CAM   │   ---   │   ---   │
+  ├─────────┼─────────┼─────────┤
+  │  Slot 4 │  Slot 5 │  Slot 6 │
+  │   SRC   │   ---   │   ---   │
+  ├─────────┼─────────┼─────────┤
+  │  Slot 1 │  Slot 2 │  Slot 3 │  ← front row (closest to you)
+  │   TIP   │   PLT   │   ---   │
+  └─────────┴─────────┴─────────┘
 ```
 
 | Slot | Labware | Purpose |
 |------|---------|---------|
 | 1 | `opentrons_96_filtertiprack_20ul` | 20 µL filter tip rack |
 | 2 | `corning_96_wellplate_330ul` | Destination well plate |
-| 4 | `agilent_1_reservoir_290ml` | Liquid source reservoir |
-| 7 | `corning_96_wellplate_360ul_flat` | Camera imaging position |
+| 4 | `agilent_1_reservoir_290ml` | Source liquid reservoir |
+| 7 | `agilent_1_reservoir_290ml` | Camera reservoir — pipette moves here for every image; camera films tips from above |
+| 10, 11 | *(empty)* | Not used |
+| TRASH | *(fixed)* | Built-in trash bin, top-right corner |
 
 The pipette (`p20_multi_gen2`) is on the **left mount**.
 
