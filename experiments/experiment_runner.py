@@ -402,6 +402,9 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
         iter_dir.mkdir(parents=True, exist_ok=True)
         accuracy = 0.0
 
+        # Show parameters being executed now
+        dashboard.set_current_params(params)
+
         if dry_run:
             dashboard.set_robot_status(f"DRY RUN — Iter {n:03d} simulating", "running", "", n)
             print("  [DRY RUN] Skipping OT-2 — generating random accuracy")
@@ -509,6 +512,7 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
                 break
 
     # ── Campaign finished ─────────────────────────────────────────────────
+    dashboard.set_current_params({})   # clear "running" panel when campaign ends
     dashboard.update(optimizer, stop_reason=stop_reason, iter_results=iter_records)
 
     best_params, best_acc = optimizer.get_best()

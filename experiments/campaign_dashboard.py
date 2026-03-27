@@ -74,6 +74,21 @@ def _next_params_html(suggestion: Optional[dict]) -> str:
     return html
 
 
+def _current_params_html(params: Optional[dict]) -> str:
+    if not params:
+        return '<div style="color:#64748b;padding:20px;text-align:center">No experiment running yet…</div>'
+    html = '<div class="param-grid">'
+    for k, v in params.items():
+        html += (
+            f'<div class="param-cell">'
+            f'<div class="param-name">{k.replace("_"," ")}</div>'
+            f'<div class="param-val" style="color:#fbbf24">{v}</div>'
+            f'</div>'
+        )
+    html += '</div>'
+    return html
+
+
 def _best_params_html(best: dict) -> str:
     html = '<div class="param-grid" style="margin-top:8px">'
     for k, v in best.get("params", {}).items():
@@ -145,11 +160,12 @@ def generate_html(data: dict) -> str:
           height:100vh;font-size:24px">
           <div>Starting campaign… <meta http-equiv="refresh" content="2"></div></body></html>"""
 
-    experiments  = data.get("experiments", [])
-    config       = data.get("config", {})
-    status       = data.get("status", {})
-    best         = data.get("best", {"accuracy": 0, "iteration": 0, "params": {}})
-    next_sug     = data.get("next_suggestion")
+    experiments   = data.get("experiments", [])
+    config        = data.get("config", {})
+    status        = data.get("status", {})
+    best          = data.get("best", {"accuracy": 0, "iteration": 0, "params": {}})
+    next_sug      = data.get("next_suggestion")
+    current_params = data.get("current_params") or {}
     qc_pre       = data.get("qc_pre_experiment", [])
     factor_names = config.get("factors", [])
     state        = status.get("state", "running")
@@ -398,6 +414,16 @@ def generate_html(data: dict) -> str:
   </div>
 </div>
 
+<!-- Current parameters running -->
+<div class="panel" style="margin-bottom:14px;border-color:#d97706">
+  <h2 style="display:flex;align-items:center;gap:8px">
+    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{'#f59e0b' if current_params else '#334155'};{'animation:pulse 1.5s infinite' if current_params else ''}"></span>
+    Current Parameters Running
+    <span class="tip" data-tip="The parameter values being executed by the robot in the current iteration. Updated when each experiment begins.">?</span>
+  </h2>
+  {_current_params_html(current_params)}
+</div>
+
 <!-- Next suggestion + stopping criteria -->
 <div class="panels">
   <div class="panel">
@@ -618,6 +644,7 @@ class CampaignDashboard:
         self._dry_run = dry_run
         self._state = "running"
         self._data: dict = {}
+        self._current_params: dict = {}
         self._lock = threading.Lock()
         self._server: Optional[HTTPServer] = None
 
@@ -756,6 +783,12 @@ class CampaignDashboard:
             if 'status' in self._data:
                 self._data['status']['state'] = state
 
+    def set_current_params(self, params: dict):
+        """Store the parameters currently being executed by the robot."""
+        with self._lock:
+            self._current_params = dict(params) if params else {}
+            self._data["current_params"] = self._current_params
+
     def set_robot_status(self, step: str, ot2_status: str = "idle",
                          run_id: str = "", iteration: int = None):
         """Lightweight update — only refreshes the robot status fields.
@@ -852,6 +885,7 @@ class CampaignDashboard:
                     "params":    optimizer._raw_to_dict(optimizer.X_raw[best_idx]) if best_idx is not None else {},
                 },
                 "next_suggestion":    next_suggestion,
+                "current_params":     self._current_params,
                 "qc_pre_experiment":  pre_qc,
                 "dry_run":            self._dry_run,
             }
