@@ -2,3 +2,7 @@
 *.pth
 *.mp4
 *.jpg
+
+# Generated protocol files (one per experiment run — tracked externally)
+experiments/protocols/
+
