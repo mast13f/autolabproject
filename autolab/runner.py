@@ -5,19 +5,19 @@ Closed-loop optimization pipeline:
 
   Bayesian Optimizer
        ↓  suggested parameters
-  Protocol Generator  →  saves iter_NNN_*.py to experiments/protocols/
+  Protocol Generator  →  saves iter_NNN_*.py to protocols/
        ↓  protocol file
   OT-2 Controller     →  runs on robot
        ↓  images saved to captured_images/
-  Liquid Analyzer     →  saves CSV to experiments/results/iter_NNN/
+  Liquid Analyzer     →  saves CSV to results/iter_NNN/
        ↓  accuracy score
   Bayesian Optimizer  ←  tell(params, accuracy)
 
 Repeats until stopping criteria met or user presses Stop in dashboard.
 
 Usage:
-    python experiment_runner.py              # real robot run
-    python experiment_runner.py --dry-run    # no robot, random accuracy (for testing)
+    python -m autolab.runner              # real robot run
+    python -m autolab.runner --dry-run    # no robot, random accuracy (for testing)
 """
 
 import csv as _csv
@@ -59,20 +59,15 @@ def _write_results_csv(csv_path: Path, iteration: int, phase: str,
 import matplotlib
 matplotlib.use('Agg')
 
-# ── Path setup ────────────────────────────────────────────────────────────────
-EXPERIMENTS_DIR = Path(__file__).parent
-ROOT = EXPERIMENTS_DIR.parent
-sys.path.insert(0, str(EXPERIMENTS_DIR))
-# Add simulation/ directly so simulation.py can resolve `from dashboard import ...`
-sys.path.insert(0, str(ROOT / "simulation"))
-# Add root for OT2_operation and camera imports
+# ── Path setup — add project root so all packages resolve ─────────────────────
+ROOT = Path(__file__).parent.parent   # autolab/ → autolabproject/
 sys.path.insert(0, str(ROOT))
 
-import campaign_config as cfg
-from campaign_dashboard import CampaignDashboard
-from protocol_generator import generate_protocol
-from setup_wizard import SetupWizard, build_factors_meta
-from simulation import DOEOptimizer, simulate_qc_checks_pre_experiment, simulate_qc_checks_per_iteration
+import autolab.config as cfg
+from autolab.dashboard import CampaignDashboard
+from autolab.protocol_gen import generate_protocol
+from autolab.wizard import SetupWizard, build_factors_meta
+from optimizer import DOEOptimizer, simulate_qc_checks_pre_experiment, simulate_qc_checks_per_iteration
 
 
 # ── Accuracy computation ──────────────────────────────────────────────────────
@@ -133,7 +128,7 @@ def run_analysis(image_dir: Path, output_dir: Path) -> float:
     """Run liquid analysis on `image_dir` and return accuracy score 0–100."""
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        from camera.analysis_script.liquid_analysis import analyze
+        from camera.analysis import analyze
         analyze(str(image_dir), str(output_dir), cfg.WEIGHTS_PATH, conf=0.35, threshold=25)
         csv_path = output_dir / "liquid_analysis.csv"
         if csv_path.exists():
@@ -146,6 +141,43 @@ def run_analysis(image_dir: Path, output_dir: Path) -> float:
     except Exception as e:
         print(f"    [WARN] Analysis failed: {e}")
         return 0.0
+
+
+# ── Camera server auto-launch ─────────────────────────────────────────────────
+
+def _camera_server_alive(ip: str, port: int, timeout: float = 2.0) -> bool:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://{ip}:{port}/health", timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _start_camera_server(camera_ip: str, camera_port: int,
+                          camera_index: int, save_dir: Path):
+    """Launch camera/server.py as a subprocess if it isn't already running."""
+    import subprocess
+    if _camera_server_alive(camera_ip, camera_port):
+        print(f"[CAMERA] Server already running at {camera_ip}:{camera_port} — reusing.")
+        return None
+    server_script = ROOT / "camera" / "server.py"
+    if not server_script.exists():
+        print(f"[CAMERA] server.py not found at {server_script} — skipping auto-launch.")
+        return None
+    cmd = [sys.executable, str(server_script),
+           "--camera-index", str(camera_index),
+           "--port",         str(camera_port),
+           "--save-dir",     str(save_dir)]
+    print(f"[CAMERA] Launching: {' '.join(cmd)}")
+    proc = subprocess.Popen(cmd)
+    for _ in range(16):
+        time.sleep(0.5)
+        if _camera_server_alive("127.0.0.1", camera_port):
+            print(f"[CAMERA] Camera server ready on port {camera_port}.")
+            return proc
+    print("[CAMERA] WARNING: Camera server did not respond in time — continuing anyway.")
+    return proc
 
 
 # ── Interruptible OT-2 run ────────────────────────────────────────────────────
@@ -234,9 +266,11 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     initial_mode      = wc.get("initial_mode", "algorithm")
 
     # Hardware settings from wizard (override cfg defaults when provided)
-    camera_ip    = wc.get("camera_ip")   or cfg.CAMERA_SERVER_IP
-    camera_port  = wc.get("camera_port") or cfg.CAMERA_SERVER_PORT
-    robot_ip     = wc.get("robot_ip")    or cfg.ROBOT_IP
+    camera_ip    = wc.get("camera_ip")     or cfg.CAMERA_SERVER_IP
+    camera_port  = int(wc.get("camera_port") or cfg.CAMERA_SERVER_PORT)
+    camera_index = int(wc.get("camera_index") if wc.get("camera_index") is not None
+                       else cfg.CAMERA_INDEX)
+    robot_ip     = wc.get("robot_ip")     or cfg.ROBOT_IP
 
     print("=" * 70)
     print("AutoLab Experiment Campaign")
@@ -280,10 +314,11 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     dashboard.start()
     dashboard.update(optimizer)
 
-    # ── Robot ─────────────────────────────────────────────────────────────
-    robot = None
+    # ── Robot + camera server ─────────────────────────────────────────────
+    robot    = None
+    cam_proc = None
     if not dry_run:
-        from OT2_operation.ot2_controller import OT2
+        from robot.controller import OT2
         try:
             robot = OT2(ip=robot_ip)
             robot.lights(lights_on)
@@ -292,6 +327,7 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             print("  Tip: run with --dry-run to test without a robot.")
             dashboard.stop()
             sys.exit(1)
+        cam_proc = _start_camera_server(camera_ip, camera_port, camera_index, cfg.IMAGES_DIR)
 
     # ── Pre-experiment QC ─────────────────────────────────────────────────
     print("\n--- Pre-Experiment QC ---")
@@ -546,6 +582,13 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
         pass
     finally:
         dashboard.stop()
+        if cam_proc is not None:
+            print("[CAMERA] Stopping camera server…")
+            cam_proc.terminate()
+            try:
+                cam_proc.wait(timeout=5)
+            except Exception:
+                cam_proc.kill()
 
     return best_params, best_acc
 

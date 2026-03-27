@@ -9,6 +9,10 @@ Both methods run on every image. The final "liquid_detected" verdict uses both:
   - Green detection is the primary signal (more accurate for green liquid)
   - YOLO provides per-tip bounding boxes and fill ratios
 
+YOLO-NAS model and training:
+  GitHub : https://github.com/BDD-G/OT2-Computer-Vision
+  Weights: YOLO/OT2-Computer-Vision/Trained Models_NAS/ckpt_best.pth
+
 Usage:
     python liquid_analysis.py --images ./captured_images
     python liquid_analysis.py --images ./captured_images --output ./analysis_result
@@ -36,7 +40,7 @@ import argparse
 
 CLASS_NAMES = ["tips", "liquid"]
 DEFAULT_WEIGHTS = os.path.expanduser(
-    "~/autolabproject/YOLO/OT2-Computer-Vision/Trained Models_NAS/ckpt_best.pth"
+    "~/autolabproject/models/ckpt_best.pth"
 )
 
 

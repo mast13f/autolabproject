@@ -15,7 +15,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern, ConstantKernel, WhiteKernel
 import matplotlib.pyplot as plt
 
-from dashboard import CampaignDashboard
+from optimizer._sim_dashboard import CampaignDashboard
 
 
 # ---------------------------------------------------------------------------

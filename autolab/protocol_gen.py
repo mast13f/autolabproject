@@ -114,10 +114,11 @@ Parameters: {params}
 
 Deck layout
 -----------
-  Slot 1 : Tip rack  (opentrons_96_filtertiprack_20ul)
-  Slot 2 : Well plate (corning_96_wellplate_330ul)
-  Slot 4 : Reservoir  (agilent_1_reservoir_290ml)
-  Slot 7 : Camera position (corning_96_wellplate_360ul_flat)
+  Slot  1 : Tip rack         (opentrons_96_filtertiprack_20ul)
+  Slot  2 : Well plate       (corning_96_wellplate_330ul)
+  Slot  4 : Source reservoir (agilent_1_reservoir_290ml)
+  Slot  7 : Camera reservoir (agilent_1_reservoir_290ml — pipette moves here for photos)
+  TRASH   : Fixed top-right
 """
 
 from opentrons import protocol_api
@@ -217,7 +218,7 @@ def run(protocol: protocol_api.ProtocolContext):
     tip_rack    = protocol.load_labware("opentrons_96_filtertiprack_20ul", "1")
     well_plate  = protocol.load_labware("corning_96_wellplate_330ul", "2")
     reservoir   = protocol.load_labware("agilent_1_reservoir_290ml", "4")
-    cam_spot    = protocol.load_labware("corning_96_wellplate_360ul_flat", "7")
+    cam_spot    = protocol.load_labware("agilent_1_reservoir_290ml", "7")  # camera films here
 
     # Load pipette
     pipette = protocol.load_instrument(

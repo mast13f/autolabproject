@@ -1,8 +1,20 @@
+### Large binary files ###
 *.rar
 *.pth
 *.mp4
 *.jpg
 
-# Generated protocol files (one per experiment run — tracked externally)
-experiments/protocols/
+### Generated protocol files (one per experiment — tracked externally) ###
+protocols/
 
+### Campaign results (CSV, plots, per-iteration images) ###
+results/
+
+### Camera captures ###
+captured_images/
+
+### Python cache ###
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

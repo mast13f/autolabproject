@@ -147,11 +147,12 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
   .field-error.visible { display: inline; }
 
   /* ── Deck diagram ── */
-  .deck-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 110px); gap: 10px; margin-top: 16px; }
-  .slot { border: 2px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; text-align: center; }
+  .deck-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(4, 90px); gap: 10px; margin-top: 16px; }
+  .slot { border: 2px solid var(--border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; }
   .slot.active { border-color: var(--accent); background: rgba(59,130,246,.07); }
   .slot.camera-slot { border-color: #a855f7; background: rgba(168,85,247,.07); }
   .slot.empty { background: transparent; opacity: .3; }
+  .slot.trash { border-color: #ef4444; background: rgba(239,68,68,.07); opacity: .7; }
   .slot .slot-num { font-size: 0.68rem; color: var(--muted); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   .slot .slot-indicator { width: 28px; height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 700; letter-spacing: .03em; }
   .slot.active .slot-indicator { background: rgba(59,130,246,.2); color: var(--accent); border: 1px solid rgba(59,130,246,.4); }
@@ -481,12 +482,28 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
       <div class="subtitle">Place labware in the correct slots on the OT-2 deck before starting. The diagram below shows the robot as viewed from the front.</div>
 
       <div class="deck-grid">
-        <!-- Row 3 (back row of robot) — displayed at top -->
-        <div class="slot camera-slot" title="Slot 7 — Camera position plate. The pipette moves here before each image capture.">
+        <!-- Row 4 (top — back of robot): 10, 11, TRASH -->
+        <div class="slot empty" title="Slot 10 — Not used in this protocol">
+          <div class="slot-num">Slot 10</div>
+          <div class="slot-indicator">—</div>
+          <div class="slot-name">Empty</div>
+        </div>
+        <div class="slot empty" title="Slot 11 — Not used in this protocol">
+          <div class="slot-num">Slot 11</div>
+          <div class="slot-indicator">—</div>
+          <div class="slot-name">Empty</div>
+        </div>
+        <div class="slot trash" title="Fixed trash bin — always top-right on OT-2">
+          <div class="slot-num">TRASH</div>
+          <div class="slot-indicator">🗑</div>
+          <div class="slot-name">Trash Bin</div>
+        </div>
+        <!-- Row 3: 7, 8, 9 -->
+        <div class="slot camera-slot" title="Slot 7 — Camera reservoir. The pipette moves here and the camera films the tips from above.">
           <div class="slot-num">Slot 7</div>
           <div class="slot-indicator">CAM</div>
-          <div class="slot-name">Camera Position</div>
-          <div class="slot-desc">corning_96_wellplate_360ul_flat</div>
+          <div class="slot-name">Camera Reservoir</div>
+          <div class="slot-desc">agilent_1_reservoir_290ml</div>
         </div>
         <div class="slot empty" title="Slot 8 — Not used in this protocol">
           <div class="slot-num">Slot 8</div>
@@ -498,11 +515,11 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
           <div class="slot-indicator">—</div>
           <div class="slot-name">Empty</div>
         </div>
-        <!-- Row 2 (middle) -->
-        <div class="slot active" title="Slot 4 — Liquid reservoir. Fill with your sample before starting.">
+        <!-- Row 2: 4, 5, 6 -->
+        <div class="slot active" title="Slot 4 — Source reservoir. Fill with your sample liquid before starting.">
           <div class="slot-num">Slot 4</div>
-          <div class="slot-indicator">RES</div>
-          <div class="slot-name">Reservoir</div>
+          <div class="slot-indicator">SRC</div>
+          <div class="slot-name">Source Reservoir</div>
           <div class="slot-desc">agilent_1_reservoir_290ml</div>
         </div>
         <div class="slot empty" title="Slot 5 — Not used in this protocol">
@@ -515,8 +532,8 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
           <div class="slot-indicator">—</div>
           <div class="slot-name">Empty</div>
         </div>
-        <!-- Row 1 (front, closest to user) -->
-        <div class="slot active" title="Slot 1 — 20 µL filter tip rack. Each column uses one set of tips.">
+        <!-- Row 1 (front, closest to user): 1, 2, 3 -->
+        <div class="slot active" title="Slot 1 — 20 µL filter tip rack. Each transfer uses one column of tips.">
           <div class="slot-num">Slot 1</div>
           <div class="slot-indicator">TIP</div>
           <div class="slot-name">Tip Rack</div>
@@ -537,13 +554,16 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
 
       <div class="deck-legend">
         <div class="leg-item"><div class="leg-dot" style="background:rgba(59,130,246,.4);border:1.5px solid var(--accent)"></div> Required labware</div>
-        <div class="leg-item"><div class="leg-dot" style="background:rgba(168,85,247,.4);border:1.5px solid #a855f7"></div> Camera position</div>
-        <div class="leg-item"><div class="leg-dot" style="background:var(--border)"></div> Empty — do not place anything</div>
+        <div class="leg-item"><div class="leg-dot" style="background:rgba(168,85,247,.4);border:1.5px solid #a855f7"></div> Camera position (Slot 7)</div>
+        <div class="leg-item"><div class="leg-dot" style="background:rgba(239,68,68,.4);border:1.5px solid #ef4444"></div> Fixed trash bin</div>
+        <div class="leg-item"><div class="leg-dot" style="background:var(--border)"></div> Empty — leave clear</div>
       </div>
 
       <div class="note">
         The multi-channel pipette is mounted on the <strong>left arm</strong>.
-        Fill the reservoir before clicking Next. Hover over any slot for details.
+        Fill the <strong>source reservoir (Slot 4)</strong> with your liquid before clicking Next.
+        Slot 7 acts as the camera filming position — leave it empty or place a labware-height placeholder.
+        Hover over any slot for details.
       </div>
     </div>
 

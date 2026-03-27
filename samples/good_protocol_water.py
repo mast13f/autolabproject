@@ -6,13 +6,14 @@ Transfers 20 uL from reservoir (slot 4) to well plate (slot 2),
 taking photos before and after every aspirate and dispense.
 
 Deck layout:
-  Slot 1: Tip rack (opentrons_96_filtertiprack_20ul)
-  Slot 2: Well plate (corning_96_wellplate_330ul)
-  Slot 4: Reservoir (agilent_1_reservoir_290ml)
-  Slot 7: Camera position (dummy labware for photo spot)
+  Slot  1: Tip rack          (opentrons_96_filtertiprack_20ul)
+  Slot  2: Well plate        (corning_96_wellplate_330ul)
+  Slot  4: Source reservoir  (agilent_1_reservoir_290ml)
+  Slot  7: Camera reservoir  (agilent_1_reservoir_290ml — camera films tips here)
+  TRASH  : Fixed top-right
 
 Setup:
-  1. Start camera_server.py on your computer first
+  1. Start camera/server.py on your computer first (auto-launched by runner.py)
   2. Upload this protocol to the OT-2 via the Opentrons App
   3. Set runtime parameters as needed before starting the run
 """
@@ -135,14 +136,14 @@ def run(protocol: protocol_api.ProtocolContext):
         "opentrons_96_filtertiprack_20ul", "1",
     )
     well_plate = protocol.load_labware(
-        "corning_96_wellplate_330ul", "2",
+        "corning_96_wellplate_330ul", "2",          # destination well plate
     )
     reservoir = protocol.load_labware(
-        "agilent_1_reservoir_290ml", "4",
+        "agilent_1_reservoir_290ml", "4",           # source reservoir
     )
-    # Camera position: dummy labware in slot 7 for photo spot
+    # Camera reservoir: pipette moves here for every photo; camera films from above
     camera_spot = protocol.load_labware(
-        "corning_96_wellplate_360ul_flat", "7",
+        "agilent_1_reservoir_290ml", "7",
     )
 
     # ── Load Pipette ───────────────────────────────────────────────────
@@ -203,7 +204,7 @@ def run(protocol: protocol_api.ProtocolContext):
         # ── DISPENSE into well plate ──
         pipette.dispense(
             volume,
-            dest.bottom(z=0.3),
+            dest.bottom(z=1),
             rate=DISPENSE_RATE / pipette.flow_rate.dispense,
         )
         # Blowout at destination (matching original liquid class)

@@ -37,40 +37,44 @@ Each iteration: the optimiser suggests parameters → a protocol file is generat
 ```
 autolabproject/
 │
-├── experiments/                     # Main campaign orchestration
-│   ├── experiment_runner.py         # Entry point — runs the full campaign loop
-│   ├── campaign_config.py           # User-editable settings (factors, limits, IPs)
-│   ├── campaign_dashboard.py        # Live HTTP dashboard with pause/stop controls
-│   ├── setup_wizard.py              # 5-step web wizard that runs before the campaign
-│   ├── protocol_generator.py        # Generates a .py protocol file per iteration
-│   ├── protocols/                   # Generated protocol files (git-ignored)
-│   └── results/                     # Per-iteration results, images, analysis CSVs
-│       ├── results.csv              # Full campaign log (all iterations, parameters, accuracy)
-│       ├── campaign_log.csv         # Optimiser internal log
-│       ├── convergence_plot.png     # Accuracy-vs-iteration plot saved at campaign end
-│       └── iter_NNN/                # Per-iteration folder
-│           ├── images/              # Captured tip images for that iteration
-│           └── analysis/            # Liquid analysis output (CSV + annotated images)
+├── autolab/                         # Main campaign orchestration package
+│   ├── runner.py                    # Entry point — runs the full campaign loop
+│   ├── config.py                    # User-editable settings (factors, limits, IPs)
+│   ├── dashboard.py                 # Live HTTP dashboard with pause/stop controls
+│   ├── wizard.py                    # 5-step web wizard that runs before the campaign
+│   └── protocol_gen.py              # Generates a .py protocol file per iteration
 │
-├── OT2_operation/                   # Robot control
-│   ├── ot2_controller.py            # OT-2 HTTP REST client (no Opentrons App needed)
+├── robot/                           # OT-2 robot control
+│   ├── controller.py                # OT-2 HTTP REST client (no Opentrons App needed)
 │   └── run_protocol.py              # Universal protocol runner (any .py file)
 │
-├── camera/                          # Camera and image analysis
-│   ├── camera_server.py             # HTTP server that captures images from USB camera
-│   ├── camera_live_view.py          # Live preview utility for camera positioning
-│   ├── analysis_script/
-│   │   └── liquid_analysis.py       # YOLO-NAS + HSV liquid detection pipeline
-│   └── protocol/                    # Example and test OT-2 protocols with camera capture
+├── camera/                          # Camera capture and image analysis
+│   ├── server.py                    # HTTP server that captures images from USB camera
+│   ├── live_view.py                 # Live preview utility for camera positioning
+│   └── analysis.py                  # YOLO-NAS + HSV liquid detection pipeline
 │
-├── simulation/                      # Bayesian optimisation engine
-│   ├── simulation.py                # DOEOptimiser class (Gaussian Process + LHS + EI)
-│   └── dashboard.py                 # Static HTML dashboard used by simulation.py
+├── optimizer/                       # Bayesian optimisation engine
+│   ├── core.py                      # DOEOptimiser class (Gaussian Process + LHS + EI)
+│   └── _sim_dashboard.py            # Internal static HTML dashboard for the optimiser
 │
-└── YOLO/
-    └── OT2-Computer-Vision/
-        └── Trained Models_NAS/
-            └── ckpt_best.pth        # Trained YOLO-NAS model weights (git-ignored)
+├── models/                          # Trained model weights
+│   └── ckpt_best.pth                # YOLO-NAS weights (git-ignored — large binary)
+│
+├── samples/                         # Example OT-2 protocols with camera capture
+│   ├── good_protocol_water.py       # Reference water-transfer protocol
+│   └── protocol_sample.py           # Minimal template
+│
+├── protocols/                       # Generated per-iteration protocol files (git-ignored)
+│
+├── results/                         # Campaign output (git-ignored)
+│   ├── results.csv                  # Full log: parameters, accuracy, EI per iteration
+│   ├── campaign_log.csv             # Optimiser internal log
+│   ├── convergence_plot.png         # Accuracy plot saved at campaign end
+│   └── iter_NNN/                    # Per-iteration folder
+│       ├── images/                  # Captured tip images
+│       └── analysis/                # Liquid analysis output (CSV + annotated images)
+│
+└── captured_images/                 # Live camera captures (git-ignored)
 ```
 
 ---
@@ -87,19 +91,29 @@ pip install -r requirements.txt
 
 `requirements.txt` lists every third-party package with minimum versions. See the file for notes on the `super-gradients` / numpy pin and how to install without the YOLO inference layer if you only need the campaign runner.
 
-### 2. Start the camera server (on your computer, not the robot)
+### 2. Start the camera server (automatic)
+
+The camera server (`camera/server.py`) **starts automatically** when you launch a live campaign. You do not need to run it manually — AutoLab launches it as a subprocess with the exact settings from the Setup Wizard and shuts it down when the campaign ends.
+
+If the server is already running (e.g. you started it manually for testing), AutoLab detects this and reuses it instead of launching a second instance.
+
+**Manual launch** (for testing the camera independently):
 
 ```bash
-python camera/camera_server.py
+python camera/server.py --camera-index 1 --port 8080 --save-dir /path/to/autolabproject/captured_images
 ```
 
-The server listens on port 8080 by default. The Setup Wizard lets you configure the camera IP, port, and camera device index without editing any files.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--camera-index` | `1` | OpenCV device index (`0` = built-in webcam, `1` = first USB camera) |
+| `--port` | `8080` | HTTP port the OT-2 protocol connects to |
+| `--save-dir` | `./captured_images` | Where images are saved |
 
 ### 3. Run the campaign
 
 ```bash
 cd autolabproject
-python experiments/experiment_runner.py
+python -m autolab.runner
 ```
 
 A browser window opens automatically with the **Setup Wizard**. Follow the five steps:
@@ -117,15 +131,15 @@ After clicking **Start Campaign**, the browser switches to the live **Campaign D
 ### 4. Skip the wizard (headless)
 
 ```bash
-python experiments/experiment_runner.py --no-wizard              # live, settings from campaign_config.py
-python experiments/experiment_runner.py --no-wizard --dry-run    # dry run, no browser
+python -m autolab.runner --no-wizard              # live, settings from autolab/config.py
+python -m autolab.runner --no-wizard --dry-run    # dry run, no browser
 ```
 
 ---
 
 ## Configuration
 
-All campaign settings live in **`experiments/campaign_config.py`**. Edit this file directly, or override via the Setup Wizard at runtime.
+All campaign settings live in **`autolab/config.py`**. Edit this file directly, or override via the Setup Wizard at runtime.
 
 ```python
 # Which parameters to optimise and their ranges
