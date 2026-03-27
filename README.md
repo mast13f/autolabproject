@@ -304,7 +304,38 @@ Everything else (`http.server`, `pathlib`, `threading`, `urllib`, etc.) is Pytho
 
 | Path | Reason |
 |------|--------|
-| `experiments/protocols/` | Generated per-run; tracked externally |
+| `protocols/` | Generated per-run; tracked externally |
+| `results/` | Campaign output data |
+| `captured_images/` | Raw camera captures |
 | `*.pth` | Large model weights |
 | `*.jpg`, `*.mp4` | Captured images and videos |
 | `*.rar` | Compressed archives |
+
+---
+
+## Roadmap / Next Steps
+
+### 1 — Destination labware selection (well plate vs reservoir)
+
+Currently Slot 2 is always a `corning_96_wellplate_330ul`. A future Setup Wizard option would let the user choose:
+
+| Mode | Slot 2 labware | Use case |
+|------|---------------|----------|
+| **Well plate** *(current)* | `corning_96_wellplate_330ul` | Dispense into 96 individual wells, one column per tip-set |
+| **Reservoir** | `agilent_1_reservoir_290ml` | Bulk transfer into a single trough (e.g. for reagent prep or waste collection) |
+
+This requires:
+- A new toggle in the Setup Wizard Step 2 ("Destination type: Well plate / Reservoir")
+- A second sample protocol (`samples/reservoir_transfer.py`) where `dest_cols = [dest_res["A1"]] * NUM_COLUMNS` instead of iterating over plate columns
+- The protocol generator to branch on the selected destination type and load the correct labware in Slot 2
+
+### 2 — Plate reader verification
+
+After each dispense iteration, cross-validate the camera-based accuracy score against absorbance readings from a plate reader:
+
+- **Goal:** confirm that the YOLO/HSV liquid detection score correlates with ground-truth volume via OD measurement
+- **Integration points:**
+  - Add a post-run step in `autolab/runner.py` that triggers a plate reader measurement (via USB/serial or HTTP if the reader has an API)
+  - Log both the camera accuracy score and the plate reader OD value per iteration in `results/results.csv`
+  - Display both metrics side-by-side in the Campaign Dashboard
+  - Optionally use the plate reader OD as the primary optimisation objective instead of (or in addition to) the camera score
