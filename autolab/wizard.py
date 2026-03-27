@@ -563,7 +563,6 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
         The multi-channel pipette is mounted on the <strong>left arm</strong>.
         Fill the <strong>source reservoir (Slot 4)</strong> with your liquid before clicking Next.
         Slot 7 acts as the camera filming position — leave it empty or place a labware-height placeholder.
-        Hover over any slot for details.
       </div>
     </div>
 
