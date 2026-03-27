@@ -93,7 +93,7 @@ pip install -r requirements.txt
 python camera/camera_server.py
 ```
 
-The server listens on port 8080. Adjust `CAMERA_INDEX` in the file if your USB camera is not the default device.
+The server listens on port 8080 by default. The Setup Wizard lets you configure the camera IP, port, and camera device index without editing any files.
 
 ### 3. Run the campaign
 
@@ -106,7 +106,7 @@ A browser window opens automatically with the **Setup Wizard**. Follow the five 
 
 | Step | What happens |
 |------|-------------|
-| 1 — Connection | Checks OT-2 robot + camera server are reachable |
+| 1 — Connection | Enter robot and camera server addresses, run a connection check, toggle Dry Run if needed |
 | 2 — Configure | Choose which parameters to optimise, set fixed values for the rest, configure stopping criteria |
 | 3 — Deck Layout | Visual guide showing where to place each labware item |
 | 4 — Calibration | Verifies deck and pipette calibration via the robot API |
@@ -114,15 +114,7 @@ A browser window opens automatically with the **Setup Wizard**. Follow the five 
 
 After clicking **Start Campaign**, the browser switches to the live **Campaign Dashboard**.
 
-### 4. Test without hardware (dry run)
-
-```bash
-python experiments/experiment_runner.py --dry-run
-```
-
-Enables Dry Run in the wizard automatically. The robot and camera are skipped; accuracy scores are random. Use this to test the full pipeline before connecting hardware.
-
-### 5. Skip the wizard (headless)
+### 4. Skip the wizard (headless)
 
 ```bash
 python experiments/experiment_runner.py --no-wizard              # live, settings from campaign_config.py
@@ -250,7 +242,8 @@ The analyser (`camera/analysis_script/liquid_analysis.py`) scores each iteration
 **Accuracy = % of images where the detected state matches the expected state.**
 
 Two detection methods are combined:
-1. **YOLO-NAS** — detects liquid bounding boxes and fill ratio (`YOLO/OT2-Computer-Vision/Trained Models_NAS/ckpt_best.pth`)
+1. **YOLO-NAS** — detects liquid bounding boxes and fill ratio (`YOLO/OT2-Computer-Vision/Trained Models_NAS/ckpt_best.pth`).
+   Model trained and provided by [BDD-G/OT2-Computer-Vision](https://github.com/BDD-G/OT2-Computer-Vision).
 2. **HSV colour segmentation** — detects green liquid by hue/saturation thresholding (primary signal for green dye)
 
 ---
@@ -265,20 +258,6 @@ python OT2_operation/run_protocol.py path/to/protocol.py --simulate  # simulate 
 ```
 
 The runner auto-parses runtime parameters from the protocol file, prompts for values (with defaults), checks calibration, and streams live run status.
-
----
-
-## Network Setup
-
-The OT-2, your computer, and the camera must all be on the same network segment.
-
-| Device | Default IP | Port | Purpose |
-|--------|-----------|------|---------|
-| OT-2 (USB) | `169.254.84.3` | `31950` | Robot REST API |
-| OT-2 (Wi-Fi) | `172.26.4.16` or `172.26.4.17` | `31950` | Robot REST API |
-| Camera server | `169.254.84.3` (same machine as OT-2 USB host) | `8080` | Image capture |
-
-The robot IP is auto-detected by trying each known address. Override `ROBOT_IP` in `campaign_config.py` to pin a specific address.
 
 ---
 

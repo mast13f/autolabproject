@@ -73,6 +73,15 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
   .panel { display: none; }
   .panel.active { display: block; }
 
+  /* ── Hardware settings ── */
+  .hw-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  .hw-field { display: flex; flex-direction: column; gap: 5px; }
+  .hw-field label { font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; gap: 5px; }
+  .hw-field input { padding: 8px 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: 0.9rem; font-family: monospace; transition: border-color .2s; }
+  .hw-field input:focus { outline: none; border-color: var(--accent); }
+  .hw-field input::placeholder { color: #475569; font-style: italic; }
+  .hw-hint { font-size: 0.75rem; color: var(--muted); }
+
   /* ── Connection items ── */
   .conn-list { display: flex; flex-direction: column; gap: 12px; }
   .conn-item { display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
@@ -249,8 +258,9 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
   <div class="panel active" id="panel-1">
     <div class="card">
       <h2>Connection Check</h2>
-      <div class="subtitle">Verifying that all hardware is reachable before you start.</div>
+      <div class="subtitle">Configure your hardware addresses, then verify everything is reachable.</div>
 
+      <!-- Dry run toggle -->
       <div class="toggle-row">
         <div class="toggle-label">
           <strong>Dry Run Mode
@@ -264,22 +274,62 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
         </label>
       </div>
 
-      <div class="conn-list" id="conn-list">
+      <!-- Hardware address settings -->
+      <div class="section-label" style="margin-top:4px">
+        Hardware Addresses
+        <span class="tip" data-tip="Edit these fields to match your network setup. Changes take effect when you click Check Connections. The robot IP is tried first; leave it blank to auto-detect across common addresses.">?</span>
+      </div>
+      <div class="hw-grid">
+        <div class="hw-field">
+          <label>OT-2 Robot IP
+            <span class="tip" data-tip="The IP address of your OT-2. Over USB this is usually 169.254.84.3. Leave blank to auto-detect from known addresses.">?</span>
+          </label>
+          <input type="text" id="robot-ip-input" placeholder="Auto-detect"
+                 title="Robot IP address (leave blank to auto-detect)">
+          <span class="hw-hint">Leave blank to auto-detect</span>
+        </div>
+        <div class="hw-field">
+          <label>Camera Server IP
+            <span class="tip" data-tip="The IP of the computer running camera_server.py. If the camera server is on the same machine connected to the OT-2 via USB, this is usually the same as the robot IP host.">?</span>
+          </label>
+          <input type="text" id="camera-ip-input" value="__CAMERA_IP__"
+                 title="IP address of the computer running camera_server.py">
+        </div>
+        <div class="hw-field">
+          <label>Camera Server Port
+            <span class="tip" data-tip="The port camera_server.py is listening on. Default is 8080. Change this if you started the server on a different port.">?</span>
+          </label>
+          <input type="number" id="camera-port-input" value="__CAMERA_PORT__" min="1024" max="65535"
+                 title="Port camera_server.py listens on (default 8080)">
+        </div>
+        <div class="hw-field">
+          <label>Camera Device Index
+            <span class="tip" data-tip="The OS index of the USB camera connected to the computer running camera_server.py. 0 is usually the built-in webcam, 1 is the first external USB camera. Change this if the wrong camera is being used.">?</span>
+          </label>
+          <input type="number" id="camera-index-input" value="__CAMERA_INDEX__" min="0" max="10"
+                 title="USB camera device index (0 = built-in, 1 = first USB camera, etc.)">
+          <span class="hw-hint">0 = built-in, 1 = first USB camera</span>
+        </div>
+      </div>
+
+      <!-- Connection status -->
+      <div class="section-label">Connection Status</div>
+      <div class="conn-list">
         <div class="conn-item">
           <div class="conn-dot" id="robot-dot"></div>
           <div class="conn-info">
             <div class="conn-name">OT-2 Robot</div>
-            <div class="conn-addr" id="robot-addr">Searching known IP addresses…</div>
+            <div class="conn-addr" id="robot-addr">Press Check Connections to start</div>
           </div>
-          <span class="badge checking" id="robot-badge">Checking</span>
+          <span class="badge checking" id="robot-badge">—</span>
         </div>
         <div class="conn-item">
           <div class="conn-dot" id="camera-dot"></div>
           <div class="conn-info">
             <div class="conn-name">Camera Server</div>
-            <div class="conn-addr" id="camera-addr">—</div>
+            <div class="conn-addr" id="camera-addr">Press Check Connections to start</div>
           </div>
-          <span class="badge checking" id="camera-badge">Checking</span>
+          <span class="badge checking" id="camera-badge">—</span>
         </div>
       </div>
 
@@ -287,7 +337,7 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
     </div>
 
     <div class="btn-row">
-      <button class="btn btn-ghost" onclick="checkConnections()" title="Re-run the connection check">Re-check</button>
+      <button class="btn btn-ghost" onclick="checkConnections()" title="Test the connection to the robot and camera server">Check Connections</button>
       <button class="btn btn-primary" id="next-1" onclick="goStep(2)" disabled title="Proceed to experiment settings">Next</button>
     </div>
   </div>
@@ -697,13 +747,24 @@ async function checkConnections() {
   setBadge('camera', 'checking', 'Checking…');
   setDot('robot-dot', 'var(--yellow)');
   setDot('camera-dot', 'var(--yellow)');
-  document.getElementById('robot-addr').textContent = 'Searching known IP addresses…';
+  const robotIpOverride = document.getElementById('robot-ip-input').value.trim();
+  const cameraIp  = document.getElementById('camera-ip-input').value.trim();
+  const cameraPort = parseInt(document.getElementById('camera-port-input').value) || 8080;
+  const cameraIndex = parseInt(document.getElementById('camera-index-input').value) || 0;
+
+  document.getElementById('robot-addr').textContent = robotIpOverride
+    ? `Checking ${robotIpOverride}…`
+    : 'Searching known IP addresses…';
   document.getElementById('camera-addr').textContent = '—';
   document.getElementById('next-1').disabled = true;
   document.getElementById('conn-note').style.display = 'none';
 
   try {
-    const res = await fetch('/api/check-connections', { method: 'POST' });
+    const res = await fetch('/api/check-connections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ robot_ip: robotIpOverride, camera_ip: cameraIp, camera_port: cameraPort, camera_index: cameraIndex }),
+    });
     if (dryRun) return;
     const data = await res.json();
 
@@ -893,7 +954,12 @@ async function loadCalibration() {
   }
 
   try {
-    const res = await fetch('/api/check-calibration', { method: 'POST' });
+    const robotIpOverride = document.getElementById('robot-ip-input').value.trim();
+    const res = await fetch('/api/check-calibration', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ robot_ip: robotIpOverride }),
+    });
     calData = await res.json();
 
     const list = document.getElementById('cal-list');
@@ -1036,6 +1102,10 @@ async function launchCampaign() {
     max_iterations: parseInt(document.getElementById('max-iter').value),
     convergence_window: parseInt(document.getElementById('conv-window').value),
     convergence_tol: parseFloat(document.getElementById('conv-tol').value),
+    robot_ip: document.getElementById('robot-ip-input').value.trim() || null,
+    camera_ip: document.getElementById('camera-ip-input').value.trim(),
+    camera_port: parseInt(document.getElementById('camera-port-input').value) || 8080,
+    camera_index: parseInt(document.getElementById('camera-index-input').value) || 0,
   };
 
   try {
@@ -1089,14 +1159,17 @@ class SetupWizard:
         factors_meta: list,
         protocols_dir: str = "",
         dry_run_forced: bool = False,
+        camera_index: int = 0,
     ):
         self.port = port
         self.robot_ips = robot_ips
         self.camera_ip = camera_ip
         self.camera_port = camera_port
+        self.camera_index = camera_index
         self.factors_meta = factors_meta
         self.protocols_dir = protocols_dir
         self.dry_run_forced = dry_run_forced
+        self._resolved_robot_ip: str | None = None
 
         self._config: dict | None = None
         self._ready = threading.Event()
@@ -1140,10 +1213,18 @@ class SetupWizard:
                 body = self.rfile.read(length) if length else b""
 
                 if self.path == "/api/check-connections":
-                    self._send_json(wizard._check_connections())
+                    try:
+                        req = json.loads(body.decode()) if body else {}
+                    except Exception:
+                        req = {}
+                    self._send_json(wizard._check_connections(req))
 
                 elif self.path == "/api/check-calibration":
-                    self._send_json(wizard._check_calibration())
+                    try:
+                        req = json.loads(body.decode()) if body else {}
+                    except Exception:
+                        req = {}
+                    self._send_json(wizard._check_calibration(req))
 
                 elif self.path == "/api/open-path":
                     try:
@@ -1211,6 +1292,9 @@ class SetupWizard:
         meta_json = json.dumps(self.factors_meta)
         html = _WIZARD_HTML.replace("__FACTORS_META__", meta_json)
         html = html.replace("__PROTOCOLS_DIR__", self.protocols_dir.replace("\\", "/"))
+        html = html.replace("__CAMERA_IP__", self.camera_ip)
+        html = html.replace("__CAMERA_PORT__", str(self.camera_port))
+        html = html.replace("__CAMERA_INDEX__", str(self.camera_index))
         if self.dry_run_forced:
             html = html.replace(
                 'id="dry-run-toggle">',
@@ -1236,29 +1320,41 @@ class SetupWizard:
 
     # ── Connection check ─────────────────────────────────────────────────────
 
-    def _check_connections(self) -> dict:
+    def _check_connections(self, req: dict = None) -> dict:
+        req = req or {}
+        robot_ip_override = (req.get("robot_ip") or "").strip()
+        camera_ip   = (req.get("camera_ip") or self.camera_ip).strip() or self.camera_ip
+        camera_port = int(req.get("camera_port") or self.camera_port)
+
+        # Build ordered list of robot IPs: user override first, then defaults
+        if robot_ip_override:
+            robot_ips = [robot_ip_override] + [ip for ip in self.robot_ips if ip != robot_ip_override]
+        else:
+            robot_ips = self.robot_ips
+
         result = {
             "robot": {"ok": False, "ip": None},
-            "camera": {"ok": False, "addr": f"{self.camera_ip}:{self.camera_port}"},
+            "camera": {"ok": False, "addr": f"{camera_ip}:{camera_port}"},
         }
 
-        for ip in self.robot_ips:
+        for ip in robot_ips:
             try:
                 url = f"http://{ip}:31950/health"
                 with urllib.request.urlopen(url, timeout=3) as r:
                     if r.status == 200:
                         result["robot"] = {"ok": True, "ip": ip}
+                        self._resolved_robot_ip = ip
                         break
             except Exception:
                 continue
 
         try:
-            url = f"http://{self.camera_ip}:{self.camera_port}/health"
+            url = f"http://{camera_ip}:{camera_port}/health"
             with urllib.request.urlopen(url, timeout=3) as r:
                 result["camera"]["ok"] = (r.status == 200)
         except Exception:
             try:
-                url = f"http://{self.camera_ip}:{self.camera_port}/"
+                url = f"http://{camera_ip}:{camera_port}/"
                 with urllib.request.urlopen(url, timeout=3) as r:
                     result["camera"]["ok"] = True
             except Exception:
@@ -1268,11 +1364,22 @@ class SetupWizard:
 
     # ── Calibration check ─────────────────────────────────────────────────────
 
-    def _check_calibration(self) -> dict:
+    def _check_calibration(self, req: dict = None) -> dict:
+        req = req or {}
+        robot_ip_override = (req.get("robot_ip") or "").strip()
+
+        # Use resolved IP from connection check if available, then override, then defaults
+        if self._resolved_robot_ip:
+            robot_ips = [self._resolved_robot_ip]
+        elif robot_ip_override:
+            robot_ips = [robot_ip_override] + [ip for ip in self.robot_ips if ip != robot_ip_override]
+        else:
+            robot_ips = self.robot_ips
+
         items = []
         robot_ip = None
 
-        for ip in self.robot_ips:
+        for ip in robot_ips:
             try:
                 url = f"http://{ip}:31950/health"
                 with urllib.request.urlopen(url, timeout=3) as r:

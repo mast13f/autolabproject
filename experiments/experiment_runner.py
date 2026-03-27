@@ -210,7 +210,8 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
         wizard_config: Dict from SetupWizard.wait_for_start(), overrides cfg defaults
                        when provided. Keys: dry_run, lights, active_factors,
                        fixed_params, initial_mode, n_initial, custom_initial,
-                       max_iterations, convergence_window, convergence_tol.
+                       max_iterations, convergence_window, convergence_tol,
+                       robot_ip, camera_ip, camera_port, camera_index.
     """
     import random
 
@@ -231,6 +232,11 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     lights_on         = wc.get("lights", True)
     custom_initial    = wc.get("custom_initial", [])
     initial_mode      = wc.get("initial_mode", "algorithm")
+
+    # Hardware settings from wizard (override cfg defaults when provided)
+    camera_ip    = wc.get("camera_ip")   or cfg.CAMERA_SERVER_IP
+    camera_port  = wc.get("camera_port") or cfg.CAMERA_SERVER_PORT
+    robot_ip     = wc.get("robot_ip")    or cfg.ROBOT_IP
 
     print("=" * 70)
     print("AutoLab Experiment Campaign")
@@ -279,7 +285,7 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     if not dry_run:
         from OT2_operation.ot2_controller import OT2
         try:
-            robot = OT2(ip=cfg.ROBOT_IP)
+            robot = OT2(ip=robot_ip)
             robot.lights(lights_on)
         except ConnectionError as e:
             print(f"\n[ERROR] {e}")
@@ -385,8 +391,8 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             protocols_dir=cfg.PROTOCOLS_DIR,
             num_columns=cfg.NUM_COLUMNS,
             transfer_volume=cfg.TRANSFER_VOLUME,
-            camera_ip=cfg.CAMERA_SERVER_IP,
-            camera_port=cfg.CAMERA_SERVER_PORT,
+            camera_ip=camera_ip,
+            camera_port=camera_port,
             settle_seconds=cfg.SETTLE_SECONDS,
             camera_height_mm=cfg.CAMERA_HEIGHT_MM,
         )
@@ -559,6 +565,7 @@ if __name__ == "__main__":
             robot_ips=robot_ips,
             camera_ip=cfg.CAMERA_SERVER_IP,
             camera_port=cfg.CAMERA_SERVER_PORT,
+            camera_index=getattr(cfg, "CAMERA_INDEX", 0),
             factors_meta=build_factors_meta(cfg.FACTORS),
             protocols_dir=str(cfg.PROTOCOLS_DIR),
             dry_run_forced=dry_forced,
