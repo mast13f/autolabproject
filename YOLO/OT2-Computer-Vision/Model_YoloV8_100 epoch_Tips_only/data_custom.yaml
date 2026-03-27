@@ -1,6 +1,0 @@
-train: D:\Thesis\Code\train
-val: D:\Thesis\Code\val
-
-nc: 1
-
-names: ["pipette_tips"]
