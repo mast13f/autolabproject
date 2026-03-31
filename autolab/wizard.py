@@ -1361,10 +1361,15 @@ class SetupWizard:
         }
 
         # ── Robot check ───────────────────────────────────────────────────────
+        def _ot2_get(url: str, timeout: int = 3):
+            """GET an OT-2 endpoint with the required opentrons-version header."""
+            req = urllib.request.Request(url)
+            req.add_header("opentrons-version", "*")
+            return urllib.request.urlopen(req, timeout=timeout)
+
         for ip in robot_ips:
             try:
-                url = f"http://{ip}:31950/health"
-                with urllib.request.urlopen(url, timeout=3) as r:
+                with _ot2_get(f"http://{ip}:31950/health") as r:
                     if r.status == 200:
                         result["robot"] = {"ok": True, "ip": ip}
                         self._resolved_robot_ip = ip
@@ -1422,10 +1427,15 @@ class SetupWizard:
         items = []
         robot_ip = None
 
+        def _ot2_get_cal(url: str, timeout: int = 3):
+            """GET an OT-2 endpoint with the required opentrons-version header."""
+            req = urllib.request.Request(url)
+            req.add_header("opentrons-version", "*")
+            return urllib.request.urlopen(req, timeout=timeout)
+
         for ip in robot_ips:
             try:
-                url = f"http://{ip}:31950/health"
-                with urllib.request.urlopen(url, timeout=3) as r:
+                with _ot2_get_cal(f"http://{ip}:31950/health") as r:
                     if r.status == 200:
                         robot_ip = ip
                         break
@@ -1438,7 +1448,7 @@ class SetupWizard:
         base = f"http://{robot_ip}:31950"
 
         try:
-            with urllib.request.urlopen(f"{base}/calibration/status", timeout=5) as r:
+            with _ot2_get_cal(f"{base}/calibration/status", timeout=5) as r:
                 data = json.loads(r.read().decode())
             deckCal = data.get("deckCalibration", {})
             ok = deckCal.get("status", "") == "OK"
@@ -1451,7 +1461,7 @@ class SetupWizard:
             items.append({"name": "Deck Calibration", "detail": str(e), "status": "warn"})
 
         try:
-            with urllib.request.urlopen(f"{base}/calibration/pipette_offset", timeout=5) as r:
+            with _ot2_get_cal(f"{base}/calibration/pipette_offset", timeout=5) as r:
                 offsets = json.loads(r.read().decode())
             has_left = any(o.get("mount") == "left" for o in offsets.get("data", []))
             items.append({
@@ -1463,7 +1473,7 @@ class SetupWizard:
             items.append({"name": "Pipette Offset Calibration", "detail": str(e), "status": "warn"})
 
         try:
-            with urllib.request.urlopen(f"{base}/calibration/tip_length", timeout=5) as r:
+            with _ot2_get_cal(f"{base}/calibration/tip_length", timeout=5) as r:
                 tips = json.loads(r.read().decode())
             count = len(tips.get("data", []))
             items.append({

@@ -21,7 +21,8 @@ from pathlib import Path
 
 # ── Default robot IPs (USB link-local is most reliable) ────────────────────
 ROBOT_IPS = [
-    "169.254.84.3",   # USB (link-local) — most common for direct connection
+    "169.254.83.111", # USB (link-local) — this robot's wired IP
+    "169.254.84.3",   # USB (link-local) — fallback
     "172.26.4.16",    # Wi-Fi / lab network
     "172.26.4.17",    # Wi-Fi / lab network (backup)
 ]
@@ -39,6 +40,7 @@ def _request(method: str, url: str, data=None, content_type="application/json", 
         pass  # already encoded
 
     req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("opentrons-version", "*")   # required by OT-2 API v6+
     if data and not content_type.startswith("multipart"):
         req.add_header("Content-Type", content_type)
 
@@ -160,7 +162,10 @@ class OT2:
             url,
             data=body,
             method="POST",
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "opentrons-version": "*",
+            },
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
