@@ -23,7 +23,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 
 # ── Defaults (overridden by CLI args) ──────────────────────────────────────
-DEFAULT_CAMERA_INDEX = 1        # USB camera index (0 = built-in, 1 = first USB cam)
+DEFAULT_CAMERA_INDEX = 0        # USB camera index (0 = first/built-in, 1 = first external USB cam)
 DEFAULT_PORT         = 8080     # Port the server listens on
 DEFAULT_SAVE_DIR     = "./captured_images"  # Where images are saved
 # ───────────────────────────────────────────────────────────────────────────

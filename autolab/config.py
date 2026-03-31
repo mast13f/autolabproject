@@ -40,9 +40,9 @@ TRANSFER_VOLUME = 20    # µL per transfer
 
 # ── Robot / camera settings ───────────────────────────────────────────────────
 ROBOT_IP           = None             # None = auto-detect; or set e.g. "169.254.84.3"
-CAMERA_SERVER_IP   = "169.254.84.3"   # IP of the computer running camera/server.py
+CAMERA_SERVER_IP   = "127.0.0.1"     # IP of the computer running camera/server.py (localhost — server runs on this machine)
 CAMERA_SERVER_PORT = 8080
-CAMERA_INDEX       = 1                # USB camera device index (0 = built-in, 1 = first USB cam)
+CAMERA_INDEX       = 0                # USB camera device index (0 = first/built-in, 1 = first USB cam)
 SETTLE_SECONDS     = 2                # Seconds to wait before capturing image
 CAMERA_HEIGHT_MM   = 1                # Height above slot 7 reservoir for photo
 

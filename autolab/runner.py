@@ -158,8 +158,8 @@ def _start_camera_server(camera_ip: str, camera_port: int,
                           camera_index: int, save_dir: Path):
     """Launch camera/server.py as a subprocess if it isn't already running."""
     import subprocess
-    if _camera_server_alive(camera_ip, camera_port):
-        print(f"[CAMERA] Server already running at {camera_ip}:{camera_port} — reusing.")
+    if _camera_server_alive("127.0.0.1", camera_port):
+        print(f"[CAMERA] Server already running on port {camera_port} — reusing.")
         return None
     server_script = ROOT / "camera" / "server.py"
     if not server_script.exists():

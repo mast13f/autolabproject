@@ -6,7 +6,7 @@ collects configuration, shows deck layout, verifies calibration, then
 hands off to the live campaign dashboard.
 
 Usage (called automatically by experiment_runner.py):
-    wizard = SetupWizard(port=9999, robot_ips=["169.254.84.3"], camera_ip="169.254.84.3")
+    wizard = SetupWizard(port=9999, robot_ips=["169.254.84.3"], camera_ip="127.0.0.1")
     wizard.start()
     config = wizard.wait_for_start()   # blocks until user clicks "Start Campaign"
     wizard.stop()
@@ -1189,6 +1189,7 @@ class SetupWizard:
         self.protocols_dir = protocols_dir
         self.dry_run_forced = dry_run_forced
         self._resolved_robot_ip: str | None = None
+        self._cam_proc = None   # subprocess handle for auto-started camera server
 
         self._config: dict | None = None
         self._ready = threading.Event()
@@ -1340,10 +1341,13 @@ class SetupWizard:
     # ── Connection check ─────────────────────────────────────────────────────
 
     def _check_connections(self, req: dict = None) -> dict:
+        import time as _time
         req = req or {}
         robot_ip_override = (req.get("robot_ip") or "").strip()
-        camera_ip   = (req.get("camera_ip") or self.camera_ip).strip() or self.camera_ip
-        camera_port = int(req.get("camera_port") or self.camera_port)
+        camera_ip    = (req.get("camera_ip") or self.camera_ip).strip() or self.camera_ip
+        camera_port  = int(req.get("camera_port") or self.camera_port)
+        camera_index = int(req.get("camera_index") if req.get("camera_index") is not None
+                          else self.camera_index)
 
         # Build ordered list of robot IPs: user override first, then defaults
         if robot_ip_override:
@@ -1352,10 +1356,11 @@ class SetupWizard:
             robot_ips = self.robot_ips
 
         result = {
-            "robot": {"ok": False, "ip": None},
+            "robot":  {"ok": False, "ip": None},
             "camera": {"ok": False, "addr": f"{camera_ip}:{camera_port}"},
         }
 
+        # ── Robot check ───────────────────────────────────────────────────────
         for ip in robot_ips:
             try:
                 url = f"http://{ip}:31950/health"
@@ -1367,17 +1372,36 @@ class SetupWizard:
             except Exception:
                 continue
 
-        try:
-            url = f"http://{camera_ip}:{camera_port}/health"
-            with urllib.request.urlopen(url, timeout=3) as r:
-                result["camera"]["ok"] = (r.status == 200)
-        except Exception:
+        # ── Camera check (always verify via localhost — server runs on this machine) ──
+        def _cam_alive(ip: str, port: int, timeout: float = 2.0) -> bool:
             try:
-                url = f"http://{camera_ip}:{camera_port}/"
-                with urllib.request.urlopen(url, timeout=3) as r:
-                    result["camera"]["ok"] = True
+                with urllib.request.urlopen(f"http://{ip}:{port}/health", timeout=timeout) as r:
+                    return r.status == 200
             except Exception:
-                result["camera"]["ok"] = False
+                return False
+
+        # First check if it's already running locally
+        cam_ok = _cam_alive("127.0.0.1", camera_port)
+
+        # If not running, auto-start camera/server.py
+        if not cam_ok and self._cam_proc is None:
+            server_script = Path(__file__).parent.parent / "camera" / "server.py"
+            if server_script.exists():
+                cmd = [sys.executable, str(server_script),
+                       "--camera-index", str(camera_index),
+                       "--port",         str(camera_port)]
+                try:
+                    self._cam_proc = subprocess.Popen(cmd)
+                    # Wait up to 8 s for server to come up
+                    for _ in range(16):
+                        _time.sleep(0.5)
+                        if _cam_alive("127.0.0.1", camera_port):
+                            cam_ok = True
+                            break
+                except Exception:
+                    pass
+
+        result["camera"]["ok"] = cam_ok
 
         return result
 
