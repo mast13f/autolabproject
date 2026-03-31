@@ -603,7 +603,7 @@ if __name__ == "__main__":
         run_campaign(dry_run=dry_forced)
     else:
         # Known robot IPs to probe during connection check
-        robot_ips = ["169.254.84.3", "172.26.4.16", "172.26.4.17"]
+        robot_ips = ["169.254.83.111", "169.254.84.3", "172.26.4.16", "172.26.4.17"]
         if cfg.ROBOT_IP:
             robot_ips = [cfg.ROBOT_IP] + [ip for ip in robot_ips if ip != cfg.ROBOT_IP]
 

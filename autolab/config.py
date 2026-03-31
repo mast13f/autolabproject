@@ -39,7 +39,7 @@ NUM_COLUMNS     = 12    # Columns to transfer per run (1–12)
 TRANSFER_VOLUME = 20    # µL per transfer
 
 # ── Robot / camera settings ───────────────────────────────────────────────────
-ROBOT_IP           = None             # None = auto-detect; or set e.g. "169.254.84.3"
+ROBOT_IP           = "169.254.83.111" # Wired USB IP of the OT-2
 CAMERA_SERVER_IP   = "127.0.0.1"     # IP of the computer running camera/server.py (localhost — server runs on this machine)
 CAMERA_SERVER_PORT = 8080
 CAMERA_INDEX       = 0                # USB camera device index (0 = first/built-in, 1 = first USB cam)
