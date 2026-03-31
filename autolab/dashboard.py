@@ -213,6 +213,43 @@ def generate_html(data: dict) -> str:
         if stop_reason else ""
     )
 
+    # Pre-build camera block — backslashes not allowed inside f-string expressions in Python < 3.12
+    if is_dry_run:
+        _camera_feed_html = (
+            '<div class="camera-placeholder">'
+            '<div class="icon">&#128247;</div>'
+            '<div class="msg">Dry Run — No Camera Feed</div>'
+            '<div class="sub">Images are not captured in dry run mode</div>'
+            '</div>'
+        )
+    else:
+        _onerror = "this.style.display='none';document.getElementById('cam-ph').style.display='flex'"
+        _camera_feed_html = (
+            '<div class="camera-frame">'
+            '<img id="cam-img" src="/camera-feed" alt="Latest captured image"'
+            f' onerror="{_onerror}">'
+            '<div id="cam-ph" class="camera-placeholder" style="display:none">'
+            '<div class="icon">&#128247;</div>'
+            '<div class="msg">Waiting for first image</div>'
+            '<div class="sub">Images appear here after the first experiment completes</div>'
+            '</div>'
+            '</div>'
+            '<script>'
+            '(function(){'
+            'var img=document.getElementById("cam-img");'
+            'var ph=document.getElementById("cam-ph");'
+            'if(!img)return;'
+            'function refresh(){'
+            'var next=new Image();'
+            'next.onload=function(){img.src=next.src;img.style.display="block";ph.style.display="none";};'
+            'next.onerror=function(){};'
+            'next.src="/camera-feed?t="+Date.now();'
+            '}'
+            'setInterval(refresh,2000);'
+            '})();'
+            '</script>'
+        )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -482,36 +519,7 @@ def generate_html(data: dict) -> str:
 <!-- Camera feed -->
 <div class="section">
   <h2>Camera Live View{' &nbsp;<span style="font-size:11px;color:#64748b;font-weight:400;text-transform:none">updates every 2 s</span>' if not is_dry_run else ''}</h2>
-  {'<div class="camera-placeholder"><div class="icon">&#128247;</div><div class="msg">Dry Run — No Camera Feed</div><div class="sub">Images are not captured in dry run mode</div></div>' if is_dry_run else '''
-  <div class="camera-frame">
-    <img id="cam-img" src="/camera-feed" alt="Latest captured image"
-         onerror="this.style.display=\'none\';document.getElementById(\'cam-ph\').style.display=\'flex\'">
-    <div id="cam-ph" class="camera-placeholder" style="display:none">
-      <div class="icon">&#128247;</div>
-      <div class="msg">Waiting for first image</div>
-      <div class="sub">Images appear here after the first experiment completes</div>
-    </div>
-  </div>
-  <script>
-  (function(){{
-    var img = document.getElementById('cam-img');
-    var ph  = document.getElementById('cam-ph');
-    if (!img) return;
-    function refresh() {{
-      var next = new Image();
-      next.onload = function() {{
-        img.src = next.src;
-        img.style.display = 'block';
-        ph.style.display  = 'none';
-      }};
-      next.onerror = function() {{
-        // keep showing last good image or placeholder — don't flash on error
-      }};
-      next.src = '/camera-feed?t=' + Date.now();
-    }}
-    setInterval(refresh, 2000);
-  }})();
-  </script>'''}
+  {_camera_feed_html}
 </div>
 
 <!-- Accuracy chart -->
