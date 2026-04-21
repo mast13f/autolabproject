@@ -1,6 +1,6 @@
 # AutoLab — Closed-Loop Liquid Handling Optimiser
 
-AutoLab is a self-driving laboratory system that autonomously optimises OT-2 pipette parameters using Bayesian optimisation. It runs experiments, captures images, analyses liquid detection accuracy, and feeds results back to the optimiser — without human intervention between iterations.
+AutoLab is a self-driving laboratory system that optimises OT-2 pipette parameters using Bayesian optimisation. It runs experiments, captures images, analyses liquid detection accuracy, and feeds results back to the optimiser. Between experiments the campaign pauses for operator confirmation so you can replace labware or refill reservoirs before continuing.
 
 ---
 
@@ -202,8 +202,13 @@ Open automatically at `http://localhost:9999/` when a campaign starts. Refreshes
 |--------|--------|
 | Pause | Finish the current image capture, then wait |
 | Resume | Continue from a paused state |
-| Stop After Iteration | Finish the current experiment, then stop cleanly |
+| Confirm & Run Next Experiment | Appears after each completed experiment — click to start the next one |
+| Stop After Iteration | Finish the current experiment, then stop cleanly (also works while awaiting confirmation) |
 | Stop Now | Immediately halt the OT-2 mid-run |
+
+**Inter-experiment confirmation gate:**
+
+After every completed experiment the campaign enters an **Awaiting Confirmation** state. The dashboard displays a prominent panel reminding you to replace labware, refill reservoirs, or make any deck changes. The next experiment does **not** start — and its protocol is **not** generated or uploaded — until you click **Confirm & Run Next Experiment**. The first experiment in a campaign starts immediately; confirmation is required only between experiments.
 
 **Sections:**
 

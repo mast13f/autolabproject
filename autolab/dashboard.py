@@ -4,6 +4,7 @@ Campaign Dashboard
 Live HTML dashboard served at http://localhost:PORT/ with:
   - Real-time accuracy chart and experiment log
   - Pause / Resume / Stop buttons
+  - Per-iteration user confirmation gate (awaiting_confirmation state)
   - Per-iteration protocol file tracking
   - QC checks display
 
@@ -16,6 +17,7 @@ Usage:
     db.start()
     db.update(optimizer, ...)   # call after each iteration
     state = db.get_state()      # "running" | "paused" | "stopped" | "completed"
+                                # | "awaiting_confirmation"
 """
 
 import json
@@ -32,11 +34,12 @@ DEFAULT_PORT = 9999
 
 def _status_class(state: str) -> str:
     return {
-        "running":   "status-running",
-        "paused":    "status-paused",
-        "stop_now":  "status-stopping",
-        "stopped":   "status-stopped",
-        "completed": "status-converged",
+        "running":               "status-running",
+        "paused":                "status-paused",
+        "stop_now":              "status-stopping",
+        "stopped":               "status-stopped",
+        "completed":             "status-converged",
+        "awaiting_confirmation": "status-awaiting",
     }.get(state, "status-running")
 
 
@@ -175,8 +178,9 @@ def generate_html(data: dict) -> str:
     # Button visibility
     show_pause    = "" if state == "running"               else "display:none"
     show_resume   = "" if state == "paused"                else "display:none"
-    show_stop     = "" if state in ("running", "paused")   else "display:none"
+    show_stop     = "" if state in ("running", "paused", "awaiting_confirmation") else "display:none"
     show_stop_now = "" if state in ("running", "paused", "stop_now") else "display:none"
+    show_confirm  = "" if state == "awaiting_confirmation" else "display:none"
 
     # Robot status data
     rs = data.get("robot_status", {})
@@ -274,6 +278,7 @@ def generate_html(data: dict) -> str:
   .status-paused{{background:#78350f;color:#fcd34d}}
   .status-stopped{{background:#7c2d12;color:#fca5a5}}
   .status-converged{{background:#1e3a5f;color:#7dd3fc}}
+  .status-awaiting{{background:#4c1d95;color:#c4b5fd}}
 
   /* Control buttons */
   .btn{{padding:7px 16px;border-radius:8px;border:none;cursor:pointer;
@@ -282,6 +287,11 @@ def generate_html(data: dict) -> str:
   .btn-pause{{background:#d97706;color:#fff}}
   .btn-resume{{background:#059669;color:#fff}}
   .btn-stop{{background:#dc2626;color:#fff}}
+  .btn-confirm{{background:#7c3aed;color:#fff;font-size:15px;padding:12px 28px;border-radius:10px}}
+  .confirm-panel{{background:#1e1338;border:2px solid #7c3aed;border-radius:12px;padding:24px;
+                   margin-bottom:22px;text-align:center}}
+  .confirm-panel h2{{color:#c4b5fd;font-size:16px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}}
+  .confirm-panel .confirm-msg{{color:#a78bfa;font-size:13px;margin-bottom:16px;line-height:1.6}}
 
   .stop-banner{{background:#7c2d12;color:#fca5a5;padding:11px 18px;
                 border-radius:8px;margin-bottom:16px;font-size:13px}}
@@ -401,7 +411,7 @@ def generate_html(data: dict) -> str:
 <div class="header">
   <h1>AutoLab Campaign Dashboard</h1>
   <div class="header-right">
-    <span class="status {_status_class(state)}">{state.upper()}</span>
+    <span class="status {_status_class(state)}">{'AWAITING CONFIRMATION' if state == 'awaiting_confirmation' else state.upper()}</span>
     <button class="btn btn-pause"   style="{show_pause}"  onclick="ctrl('pause')">Pause</button>
     <button class="btn btn-resume"  style="{show_resume}" onclick="ctrl('resume')">Resume</button>
     <button class="btn btn-stop"    style="{show_stop}"
@@ -416,6 +426,19 @@ def generate_html(data: dict) -> str:
 </div>
 
 {stop_banner}
+
+<!-- Awaiting confirmation panel -->
+<div class="confirm-panel" style="{show_confirm}">
+  <h2>&#9888; Waiting for User Confirmation</h2>
+  <div class="confirm-msg">
+    The previous experiment has finished. You may now replace labware, refill reservoirs,
+    or make any deck changes before continuing.<br>
+    Review the <strong>Next Suggested Parameters</strong> below, then click the button to proceed.
+  </div>
+  <button class="btn btn-confirm" onclick="ctrl('confirm_next')">
+    &#9654; Confirm &amp; Run Next Experiment
+  </button>
+</div>
 
 <!-- Stat cards -->
 <div class="cards">
@@ -708,10 +731,12 @@ class CampaignDashboard:
                             db._state = 'paused'
                         elif action == 'resume' and db._state == 'paused':
                             db._state = 'running'
-                        elif action == 'stop' and db._state in ('running', 'paused'):
+                        elif action == 'stop' and db._state in ('running', 'paused', 'awaiting_confirmation'):
                             db._state = 'stopped'
                         elif action == 'stop_now' and db._state in ('running', 'paused', 'stop_now'):
                             db._state = 'stop_now'
+                        elif action == 'confirm_next' and db._state == 'awaiting_confirmation':
+                            db._state = 'running'
                         new = db._state
 
                     if prev != new:
@@ -781,7 +806,7 @@ class CampaignDashboard:
     # ── State ─────────────────────────────────────────────────────────────
 
     def get_state(self) -> str:
-        """Return current campaign state: running | paused | stopped | completed."""
+        """Return current campaign state: running | paused | stopped | completed | awaiting_confirmation."""
         with self._lock:
             return self._state
 

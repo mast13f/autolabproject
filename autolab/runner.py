@@ -547,6 +547,42 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
                 print(f"\n*** CONVERGED: {stop_reason} ***")
                 break
 
+        # ── Hard cap check (avoid waiting for confirmation when cap reached) ─
+        if optimizer.iteration >= max_iterations:
+            stop_reason = (
+                f"Experiment cap reached: {max_iterations} experiments "
+                f"completed without convergence"
+            )
+            print(f"\n*** {stop_reason} ***")
+            break
+
+        # ── Await user confirmation before next experiment ────────────
+        # Compute next suggestion preview so the user can see what will run
+        try:
+            preview_params, _ = optimizer.suggest()
+            preview_params.update(fixed_params)
+        except Exception:
+            preview_params = None
+        dashboard.update(optimizer, next_suggestion=preview_params, iter_results=iter_records)
+        dashboard.set_state("awaiting_confirmation")
+        dashboard.set_robot_status(
+            "Waiting for user confirmation — replace labware / refill if needed",
+            "idle", "", n,
+        )
+        print("\n  [WAITING] Awaiting user confirmation in dashboard before next experiment…")
+
+        while True:
+            time.sleep(2)
+            s = dashboard.get_state()
+            if s == "running":
+                print("  [CONFIRMED] User confirmed — proceeding to next experiment")
+                break
+            if s in ("stopped", "stop_now"):
+                stop_reason = "Campaign stopped by user"
+                break
+        if stop_reason:
+            break
+
     # ── Campaign finished ─────────────────────────────────────────────────
     dashboard.set_current_params({})   # clear "running" panel when campaign ends
     dashboard.update(optimizer, stop_reason=stop_reason, iter_results=iter_records)
