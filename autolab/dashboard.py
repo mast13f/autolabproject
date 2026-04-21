@@ -22,7 +22,7 @@ import json
 import statistics
 import threading
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 
 DEFAULT_PORT = 9999
@@ -654,7 +654,7 @@ class CampaignDashboard:
         self._data: dict = {}
         self._current_params: dict = {}
         self._lock = threading.Lock()
-        self._server: Optional[HTTPServer] = None
+        self._server: Optional[ThreadingHTTPServer] = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -735,7 +735,7 @@ class CampaignDashboard:
 
         import socket as _socket
 
-        class _ReuseServer(HTTPServer):
+        class _ReuseServer(ThreadingHTTPServer):
             allow_reuse_address = True
 
             def server_bind(self):

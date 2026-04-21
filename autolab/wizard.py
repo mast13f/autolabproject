@@ -22,7 +22,7 @@ import threading
 import urllib.error
 import urllib.request
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -1268,7 +1268,7 @@ class SetupWizard:
                     self.send_response(404)
                     self.end_headers()
 
-        class _ReuseServer(HTTPServer):
+        class _ReuseServer(ThreadingHTTPServer):
             allow_reuse_address = True
             def server_bind(self):
                 self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
