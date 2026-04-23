@@ -427,6 +427,28 @@ def generate_html(data: dict) -> str:
 
 {stop_banner}
 
+<!-- Robot Status section -->
+<div class="robot-section">
+  <h2>Robot Status</h2>
+  <div class="robot-grid">
+    <div class="robot-cell" style="grid-column:span 2">
+      <div class="robot-label">Current Step</div>
+      <div class="robot-step">
+        <span class="step-dot {dot_cls}"></span>{rs_step}
+      </div>
+    </div>
+    <div class="robot-cell">
+      <div class="robot-label">OT-2 Run Status</div>
+      <span class="ot2-badge ot2-{rs_status}">{rs_status.upper()}</span>
+    </div>
+    <div class="robot-cell">
+      <div class="robot-label">Current Iteration</div>
+      <div class="robot-step">{f"#{rs_iter:03d}" if rs_iter is not None else "—"}</div>
+    </div>
+    {f'<div class="robot-cell"><div class="robot-label">Run ID</div><div style="font-size:11px;color:#64748b;font-family:monospace">{rs_run_id}</div></div>' if rs_run_id else ""}
+  </div>
+</div>
+
 <!-- Awaiting confirmation panel -->
 <div class="confirm-panel" style="{show_confirm}">
   <h2>&#9888; Waiting for User Confirmation</h2>
@@ -516,28 +538,6 @@ def generate_html(data: dict) -> str:
 
 <!-- QC section -->
 {_qc_html(qc_pre)}
-
-<!-- Robot Status section -->
-<div class="robot-section">
-  <h2>Robot Status</h2>
-  <div class="robot-grid">
-    <div class="robot-cell" style="grid-column:span 2">
-      <div class="robot-label">Current Step</div>
-      <div class="robot-step">
-        <span class="step-dot {dot_cls}"></span>{rs_step}
-      </div>
-    </div>
-    <div class="robot-cell">
-      <div class="robot-label">OT-2 Run Status</div>
-      <span class="ot2-badge ot2-{rs_status}">{rs_status.upper()}</span>
-    </div>
-    <div class="robot-cell">
-      <div class="robot-label">Current Iteration</div>
-      <div class="robot-step">{f"#{rs_iter:03d}" if rs_iter is not None else "—"}</div>
-    </div>
-    {f'<div class="robot-cell"><div class="robot-label">Run ID</div><div style="font-size:11px;color:#64748b;font-family:monospace">{rs_run_id}</div></div>' if rs_run_id else ""}
-  </div>
-</div>
 
 <!-- Camera feed -->
 <div class="section">
@@ -738,6 +738,10 @@ class CampaignDashboard:
                         elif action == 'confirm_next' and db._state == 'awaiting_confirmation':
                             db._state = 'running'
                         new = db._state
+                        # Keep rendered state in sync so Pause/Resume buttons
+                        # toggle correctly on the next page reload.
+                        if 'status' in db._data:
+                            db._data['status']['state'] = new
 
                     if prev != new:
                         print(f"\n[Dashboard] {prev.upper()} → {new.upper()}")
