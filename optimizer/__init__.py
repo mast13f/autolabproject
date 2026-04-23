@@ -1,5 +1,6 @@
 from optimizer.core import (
-    DOEOptimizer,
+    PipettingDOEOptimizer,
+    PipettingDOEOptimizer as DOEOptimizer,   # backward-compatible alias
     Factor,
     QCCheck,
     simulate_qc_checks_pre_experiment,

@@ -9,15 +9,15 @@ Closed-loop optimization pipeline:
        ↓  protocol file
   OT-2 Controller     →  runs on robot
        ↓  images saved to captured_images/
-  Liquid Analyzer     →  saves CSV to results/iter_NNN/
-       ↓  accuracy score
-  Bayesian Optimizer  ←  tell(params, accuracy)
+  Image Subtraction   →  saves results to results/iter_NNN/
+       ↓  dispense score
+  Bayesian Optimizer  ←  tell(params, score)
 
 Repeats until stopping criteria met or user presses Stop in dashboard.
 
 Usage:
     python -m autolab.runner              # real robot run
-    python -m autolab.runner --dry-run    # no robot, random accuracy (for testing)
+    python -m autolab.runner --dry-run    # no robot, random score (for testing)
 """
 
 import csv as _csv
@@ -30,7 +30,7 @@ from pathlib import Path
 # ── Results CSV ───────────────────────────────────────────────────────────────
 
 def _write_results_csv(csv_path: Path, iteration: int, phase: str,
-                        params: dict, accuracy: float, ei_val,
+                        params: dict, score: float, ei_val,
                         best_so_far: float, protocol_file: str):
     """Append one result row to the campaign CSV, writing headers on first call."""
     write_header = not csv_path.exists()
@@ -41,13 +41,13 @@ def _write_results_csv(csv_path: Path, iteration: int, phase: str,
             w.writerow(
                 ["iteration", "timestamp", "phase"]
                 + factor_names
-                + ["accuracy_%", "ei", "best_so_far_%", "protocol_file"]
+                + ["score", "ei", "best_so_far", "protocol_file"]
             )
         w.writerow(
             [iteration, time.strftime("%Y-%m-%d %H:%M:%S"), phase]
             + [params[n] for n in factor_names]
             + [
-                f"{accuracy:.2f}",
+                f"{score:.2f}",
                 f"{ei_val:.6f}" if ei_val is not None else "",
                 f"{best_so_far:.2f}",
                 protocol_file,
@@ -67,42 +67,43 @@ import autolab.config as cfg
 from autolab.dashboard import CampaignDashboard
 from autolab.protocol_gen import generate_protocol
 from autolab.wizard import SetupWizard, build_factors_meta
-from optimizer import DOEOptimizer, simulate_qc_checks_pre_experiment, simulate_qc_checks_per_iteration
+from optimizer import PipettingDOEOptimizer, simulate_qc_checks_pre_experiment, simulate_qc_checks_per_iteration
 
 
-# ── Accuracy computation ──────────────────────────────────────────────────────
+# ── Image analysis (new subtraction pipeline) ────────────────────────────────
 
-def compute_accuracy(csv_path: Path) -> float:
+def run_analysis(image_dir: Path, output_dir: Path,
+                 threshold: int = 12) -> tuple:
+    """Run image-subtraction analysis on *image_dir*.
+
+    Returns ``(score, px_data)`` where *score* is 0-100 and *px_data* is a
+    dict with pixel diagnostics (e.g. ``{"after_dispense": 1234}``).
     """
-    Compute accuracy from liquid_analysis.csv.
-
-    Accuracy = % of images where detection matches expectation:
-      before_aspirate → NO   (empty tips)
-      after_aspirate  → YES  (liquid loaded)
-      before_dispense → YES  (liquid still in tips)
-      after_dispense  → NO   (clean dispense — the key quality metric)
-    """
-    expected = {
-        "before_aspirate": "NO",
-        "after_aspirate":  "YES",
-        "before_dispense": "YES",
-        "after_dispense":  "NO",
-    }
-    correct = total = 0
+    output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            for row in _csv.DictReader(f):
-                action = row.get("action", "")
-                if action in expected:
-                    total += 1
-                    if row.get("liquid_detected") == expected[action]:
-                        correct += 1
+        from autolab.image_analysis import measure_from_images, aggregate_score
+        import numpy as np
+
+        col_results = measure_from_images(
+            str(image_dir), str(output_dir), threshold=threshold,
+        )
+        score = aggregate_score(col_results)
+        if score is None:
+            print("    [WARN] No scoreable columns found.")
+            return 0.0, {}
+
+        px_vals = [
+            v["px_after_dispense"]
+            for v in col_results.values()
+            if v.get("px_after_dispense") is not None
+        ]
+        px = {"after_dispense": int(np.mean(px_vals))} if px_vals else {}
+
+        print(f"    Analysis: score {score:.1f}/100")
+        return score, px
     except Exception as e:
-        print(f"    [WARN] Could not read analysis CSV: {e}")
-        return 0.0
-    acc = (correct / total * 100) if total > 0 else 0.0
-    print(f"    Analysis: {correct}/{total} images correct → {acc:.1f}%")
-    return acc
+        print(f"    [WARN] Analysis failed: {e}")
+        return 0.0, {}
 
 
 # ── Image collection ──────────────────────────────────────────────────────────
@@ -120,27 +121,6 @@ def collect_new_images(images_dir: Path, since: float) -> list:
             except OSError:
                 pass
     return sorted(imgs)
-
-
-# ── Liquid analysis ───────────────────────────────────────────────────────────
-
-def run_analysis(image_dir: Path, output_dir: Path) -> float:
-    """Run liquid analysis on `image_dir` and return accuracy score 0–100."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        from camera.analysis import analyze
-        analyze(str(image_dir), str(output_dir), cfg.WEIGHTS_PATH, conf=0.35, threshold=25)
-        csv_path = output_dir / "liquid_analysis.csv"
-        if csv_path.exists():
-            return compute_accuracy(csv_path)
-        print("    [WARN] No analysis CSV produced.")
-        return 0.0
-    except ImportError as e:
-        print(f"    [WARN] Could not import liquid_analysis ({e}).")
-        return 0.0
-    except Exception as e:
-        print(f"    [WARN] Analysis failed: {e}")
-        return 0.0
 
 
 # ── Camera server auto-launch ─────────────────────────────────────────────────
@@ -238,7 +218,7 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     Run the full optimization campaign.
 
     Args:
-        dry_run:       Skip OT-2 and use random accuracy scores.
+        dry_run:       Skip OT-2 and use random scores.
         wizard_config: Dict from SetupWizard.wait_for_start(), overrides cfg defaults
                        when provided. Keys: dry_run, lights, active_factors,
                        fixed_params, initial_mode, n_initial, custom_initial,
@@ -272,12 +252,16 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
                        else cfg.CAMERA_INDEX)
     robot_ip     = wc.get("robot_ip")     or cfg.ROBOT_IP
 
+    # Image analysis threshold
+    image_threshold = getattr(cfg, "IMAGE_THRESHOLD", 12)
+
     print("=" * 70)
     print("AutoLab Experiment Campaign")
     print(f"  Mode     : {'DRY RUN (no robot, random scores)' if dry_run else 'LIVE'}")
     print(f"  Factors  : {[f.name for f in factors]}")
     if fixed_params:
         print(f"  Fixed    : {fixed_params}")
+    print(f"  Liquid   : {cfg.LIQUID_TYPE} @ {cfg.CONCENTRATION_PCT}%")
     print(f"  Initial  : {n_initial} {'custom' if initial_mode == 'custom' else 'LHS'} points")
     print(f"  Max      : {max_iterations} experiments")
     print(f"  Conv.    : <{convergence_tol}% improvement over {convergence_window} BO iters")
@@ -289,16 +273,19 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     cfg.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── Optimizer ─────────────────────────────────────────────────────────
-    optimizer = DOEOptimizer(
+    optimizer = PipettingDOEOptimizer(
+        liquid_type=cfg.LIQUID_TYPE,
+        concentration_pct=cfg.CONCENTRATION_PCT,
         factors=factors,
         n_initial=n_initial,
         max_iterations=max_iterations,
         xi=cfg.XI,
         convergence_tol=convergence_tol,
         convergence_window=convergence_window,
-        csv_path=str(cfg.RESULTS_DIR / "campaign_log.csv"),
+        image_threshold=image_threshold,
+        training_csv=getattr(cfg, "TRAINING_CSV", "training_data.csv"),
         random_seed=cfg.RANDOM_SEED,
-        dashboard_path=str(cfg.RESULTS_DIR / "_sim_dashboard.html"),
+        csv_path=str(cfg.RESULTS_DIR / "campaign_log.csv"),
     )
 
     # Inject custom initial experiments if user provided them
@@ -385,8 +372,7 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             break
 
         # ── Get next parameters ───────────────────────────────────────
-        n     = optimizer.iteration
-        phase = "INITIAL" if n < n_initial else "BO"
+        n = optimizer.iteration
 
         # Use custom initial point if available
         custom_pool = getattr(optimizer, "_custom_initial", [])
@@ -409,8 +395,10 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
         # Merge in fixed parameters (not optimized)
         params.update(fixed_params)
 
+        phase_label = "INITIAL" if n < n_initial else "BO"
+
         print(f"\n{'='*60}")
-        print(f"Iteration {n:03d} | Phase: {phase}")
+        print(f"Iteration {n:03d} | Phase: {phase_label}")
         for k, v in params.items():
             print(f"  {k} = {v}")
         if ei_val is not None:
@@ -436,23 +424,26 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
         # ── Run experiment ────────────────────────────────────────────
         iter_dir = cfg.RESULTS_DIR / f"iter_{n:03d}"
         iter_dir.mkdir(parents=True, exist_ok=True)
-        accuracy = 0.0
+        score = 0.0
+        px_data: dict = {}
 
         # Show parameters being executed now
         dashboard.set_current_params(params)
 
         if dry_run:
             dashboard.set_robot_status(f"DRY RUN — Iter {n:03d} simulating", "running", "", n)
-            print("  [DRY RUN] Skipping OT-2 — generating random accuracy")
+            print("  [DRY RUN] Skipping OT-2 — generating random score")
             time.sleep(0.5)
-            accuracy = round(random.uniform(40, 99), 2)
-            print(f"  Simulated accuracy: {accuracy:.1f}%")
-            dashboard.set_robot_status(f"DRY RUN — Iter {n:03d} complete ({accuracy:.1f}%)", "succeeded", "", n)
+            score = round(random.uniform(40, 99), 2)
+            px_data = {}
+            print(f"  Simulated score: {score:.1f}")
+            dashboard.set_robot_status(f"DRY RUN — Iter {n:03d} complete ({score:.1f})", "succeeded", "", n)
 
         else:
+            # Use wizard-selected camera IP/port for OT-2 runtime params
             run_time_params = {
-                "camera_server_ip":   cfg.CAMERA_SERVER_IP,
-                "camera_server_port": cfg.CAMERA_SERVER_PORT,
+                "camera_server_ip":   camera_ip,
+                "camera_server_port": camera_port,
                 "capture_enabled":    True,
                 "settle_seconds":     cfg.SETTLE_SECONDS,
                 "camera_height_mm":   cfg.CAMERA_HEIGHT_MM,
@@ -471,15 +462,15 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
 
             if ot2_result == "stopped_by_user":
                 stop_reason = "Campaign stopped by user (Stop Now)"
-                # Still record the iteration with accuracy=0
+                # Still record the iteration with score=0
                 optimizer.per_iteration_qc.append(simulate_qc_checks_per_iteration(0))
-                optimizer.tell(params, 0.0, ei_val, phase)
+                optimizer.tell(params, 0.0, ei_val)
                 record = {"protocol_file": protocol_path.name}
                 iter_records.append(record)
                 _write_results_csv(
                     csv_path=cfg.RESULTS_DIR / "results.csv",
-                    iteration=n, phase=phase, params=params,
-                    accuracy=0.0, ei_val=ei_val,
+                    iteration=n, phase=optimizer.phases[-1], params=params,
+                    score=0.0, ei_val=ei_val,
                     best_so_far=max(optimizer.y_observed) if optimizer.y_observed else 0.0,
                     protocol_file=protocol_path.name,
                 )
@@ -500,19 +491,20 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
                 else:
                     print("  [WARN] No new images found — check camera server")
 
-                # ── Liquid analysis ───────────────────────────────────
+                # ── Image subtraction analysis ───────────────────────
                 dashboard.set_robot_status(f"Analysing images — Iter {n:03d}", "succeeded", "", n)
-                print("\n  Running liquid analysis…")
+                print("\n  Running image subtraction analysis…")
                 analysis_dir = iter_dir / "analysis"
-                accuracy = run_analysis(image_dir, analysis_dir)
+                score, px_data = run_analysis(image_dir, analysis_dir, image_threshold)
             else:
-                accuracy = 0.0
+                score = 0.0
+                px_data = {}
 
         # ── Update optimizer ──────────────────────────────────────────
         optimizer.per_iteration_qc.append(
-            simulate_qc_checks_per_iteration(accuracy)
+            simulate_qc_checks_per_iteration(score)
         )
-        optimizer.tell(params, accuracy, ei_val, phase)
+        optimizer.tell(params, score, ei_val, px=px_data)
 
         # ── Record for dashboard ──────────────────────────────────────
         record = {"protocol_file": protocol_path.name}
@@ -526,21 +518,21 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
         _write_results_csv(
             csv_path=cfg.RESULTS_DIR / "results.csv",
             iteration=n,
-            phase=phase,
+            phase=optimizer.phases[-1],
             params=params,
-            accuracy=accuracy,
+            score=score,
             ei_val=ei_val,
             best_so_far=best_so_far,
             protocol_file=protocol_path.name,
         )
 
         # ── Dashboard update ──────────────────────────────────────────
-        dashboard.set_robot_status(f"Iter {n:03d} complete — accuracy {accuracy:.1f}%", "idle", "", n)
+        dashboard.set_robot_status(f"Iter {n:03d} complete — score {score:.1f}", "idle", "", n)
         dashboard.update(optimizer, iter_results=iter_records)
-        print(f"\n  Best so far: {best_so_far:.1f}%")
+        print(f"\n  Best so far: {best_so_far:.1f}")
 
         # ── Post-tell convergence check (catches convergence immediately) ─
-        if phase == "BO":
+        if optimizer.phases[-1] == "BO":
             converged, conv_reason = optimizer.check_convergence()
             if converged:
                 stop_reason = conv_reason
@@ -587,12 +579,12 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     dashboard.set_current_params({})   # clear "running" panel when campaign ends
     dashboard.update(optimizer, stop_reason=stop_reason, iter_results=iter_records)
 
-    best_params, best_acc = optimizer.get_best()
+    best_params, best_score = optimizer.get_best()
     print(f"\n{'='*70}")
     print(f"CAMPAIGN COMPLETE — {optimizer.iteration} experiment(s)")
     if stop_reason:
         print(f"  Stop reason  : {stop_reason}")
-    print(f"  Best accuracy: {best_acc:.2f}%")
+    print(f"  Best score   : {best_score:.2f}")
     print(f"  Best parameters:")
     for k, v in best_params.items():
         print(f"    {k} = {v}")
@@ -626,7 +618,7 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             except Exception:
                 cam_proc.kill()
 
-    return best_params, best_acc
+    return best_params, best_score
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -83,7 +83,7 @@ def generate_protocol(
 
     # Extract known factors (fall back to sensible defaults)
     aspirate_speed = float(params.get("aspirate_speed", 7.6))
-    dispense_speed = float(params.get("dispense_speed", 26.0))
+    dispense_speed = float(params.get("dispense_speed", 7.15))
     air_gap        = int(round(float(params.get("air_gap",  0))))
     blow_out       = int(round(float(params.get("blow_out", 1))))
 
@@ -92,15 +92,19 @@ def generate_protocol(
     fname   = f"iter_{iteration:03d}_{summary}_{ts}.py"
     fpath   = protocols_dir / fname
 
+    # Air gap volume (µL) — only used when air_gap is on
+    air_gap_vol = 2
+
     # Code snippets that change based on parameters
-    air_gap_after_aspirate = (
-        "        pipette.air_gap(2)  # prevent dripping\n"
-        if air_gap else ""
-    )
-    air_gap_before_dispense = (
-        "        pipette.dispense(2, dest.bottom(z=0.3))  # release air gap\n"
-        if air_gap else ""
-    )
+    if air_gap:
+        aspirate_volume_code = f"TRANSFER_VOLUME - {air_gap_vol}"
+        air_gap_after_aspirate = (
+            f"        pipette.air_gap({air_gap_vol})  # prevent dripping\n"
+        )
+    else:
+        aspirate_volume_code = "TRANSFER_VOLUME"
+        air_gap_after_aspirate = ""
+
     blow_out_code = (
         "        pipette.blow_out(dest)  # expel any residual\n"
         if blow_out else ""
@@ -117,7 +121,7 @@ Deck layout
   Slot  1 : Tip rack         (opentrons_96_filtertiprack_20ul)
   Slot  2 : Well plate       (corning_96_wellplate_330ul)
   Slot  4 : Source reservoir (agilent_1_reservoir_290ml)
-  Slot  7 : Camera reservoir (agilent_1_reservoir_290ml — pipette moves here for photos)
+  Slot  7 : Camera plate     (corning_96_wellplate_360ul_flat — pipette moves here for photos)
   TRASH   : Fixed top-right
 """
 
@@ -134,7 +138,7 @@ requirements = {{"robotType": "OT-2", "apiLevel": "2.18"}}
 # ── Optimized parameters (set by Bayesian optimizer) ─────────────────────────
 ASPIRATE_SPEED = {aspirate_speed}   # µL/s
 DISPENSE_SPEED = {dispense_speed}   # µL/s
-AIR_GAP        = {bool(air_gap)}         # add 2 µL air gap after aspirate
+AIR_GAP        = {bool(air_gap)}         # add {air_gap_vol} µL air gap after aspirate
 BLOW_OUT       = {bool(blow_out)}        # blow out at destination after dispense
 
 # ── Fixed parameters ──────────────────────────────────────────────────────────
@@ -218,7 +222,7 @@ def run(protocol: protocol_api.ProtocolContext):
     tip_rack    = protocol.load_labware("opentrons_96_filtertiprack_20ul", "1")
     well_plate  = protocol.load_labware("corning_96_wellplate_330ul", "2")
     reservoir   = protocol.load_labware("agilent_1_reservoir_290ml", "4")
-    cam_spot    = protocol.load_labware("agilent_1_reservoir_290ml", "7")  # camera films here
+    cam_spot    = protocol.load_labware("corning_96_wellplate_360ul_flat", "7")  # camera films here
 
     # Load pipette
     pipette = protocol.load_instrument(
@@ -229,6 +233,9 @@ def run(protocol: protocol_api.ProtocolContext):
     # Convert absolute µL/s to Opentrons flow-rate ratio
     asp_ratio  = ASPIRATE_SPEED  / pipette.flow_rate.aspirate
     disp_ratio = DISPENSE_SPEED / pipette.flow_rate.dispense
+
+    # Volume to aspirate (reduced by air-gap size when air gap is enabled)
+    aspirate_vol = {aspirate_volume_code}
 
     def move_and_capture(action, details=""):
         pipette.move_to(cam_spot["A1"].top(cam_h))
@@ -248,16 +255,21 @@ def run(protocol: protocol_api.ProtocolContext):
         col = f"A{{idx + 1}}"
         protocol.comment(f"--- Column {{col}} ---")
 
-        # Pick up tips and pre-wet
+        # Pick up tips
         pipette.pick_up_tip(tip_well)
-        pipette.aspirate(TRANSFER_VOLUME, reservoir["A1"].bottom(z=1), rate=asp_ratio)
-        pipette.dispense(TRANSFER_VOLUME, reservoir["A1"].bottom(z=1), rate=disp_ratio)
+
+        # PICK_UP_TIP capture — reference image for subtraction analysis
+        move_and_capture("pick_up_tip", f"col_{{col}}")
+
+        # Pre-wet
+        pipette.aspirate(aspirate_vol, reservoir["A1"].bottom(z=1), rate=asp_ratio)
+        pipette.dispense(aspirate_vol, reservoir["A1"].bottom(z=1), rate=disp_ratio)
 
         # BEFORE ASPIRATE — empty tip baseline image
         move_and_capture("before_aspirate", f"col_{{col}}_empty")
 
         # ASPIRATE
-        pipette.aspirate(TRANSFER_VOLUME, reservoir["A1"].bottom(z=1), rate=asp_ratio)
+        pipette.aspirate(aspirate_vol, reservoir["A1"].bottom(z=1), rate=asp_ratio)
 {air_gap_after_aspirate}
         # AFTER ASPIRATE — liquid-filled tips
         move_and_capture("after_aspirate", f"col_{{col}}_filled")
@@ -266,7 +278,7 @@ def run(protocol: protocol_api.ProtocolContext):
         move_and_capture("before_dispense", f"col_{{col}}_pre_dispense")
 
         # DISPENSE
-{air_gap_before_dispense}        pipette.dispense(TRANSFER_VOLUME, dest.bottom(z=0.3), rate=disp_ratio)
+        pipette.dispense(aspirate_vol, dest.bottom(z=0.3), rate=disp_ratio)
 {blow_out_code}
         # AFTER DISPENSE — should be empty (key quality metric)
         move_and_capture("after_dispense", f"col_{{col}}_post_dispense")

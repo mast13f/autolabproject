@@ -1,6 +1,6 @@
 # AutoLab — Closed-Loop Liquid Handling Optimiser
 
-AutoLab is a self-driving laboratory system that optimises OT-2 pipette parameters using Bayesian optimisation. It runs experiments, captures images, analyses liquid detection accuracy, and feeds results back to the optimiser. Between experiments the campaign pauses for operator confirmation so you can replace labware or refill reservoirs before continuing.
+AutoLab is a self-driving laboratory system that optimises OT-2 pipette parameters using Bayesian optimisation. It runs experiments, captures images, scores dispense quality via image subtraction, and feeds results back to the optimiser. Between experiments the campaign pauses for operator confirmation so you can replace labware or refill reservoirs before continuing.
 
 ---
 
@@ -16,19 +16,19 @@ AutoLab is a self-driving laboratory system that optimises OT-2 pipette paramete
 │   │  (Gaussian   │                  └────────────┬─────────────┘   │
 │   │   Process)   │                               │ upload + run    │
 │   │              │                  ┌────────────▼─────────────┐   │
-│   │              │ ◀─── accuracy ── │   OT-2 Robot             │   │
+│   │              │ ◀─── score ───── │   OT-2 Robot             │   │
 │   └──────────────┘                  │   (HTTP REST API)        │   │
 │                                     └────────────┬─────────────┘   │
 │                                                  │ captures images  │
 │                                     ┌────────────▼─────────────┐   │
-│                                     │   Camera + Liquid        │   │
-│                                     │   Analyser               │   │
-│                                     │   (YOLO-NAS + HSV)       │   │
+│                                     │   Camera + Image         │   │
+│                                     │   Subtraction Analysis   │   │
+│                                     │   (OpenCV dye-biased)    │   │
 │                                     └──────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-Each iteration: the optimiser suggests parameters → a protocol file is generated and uploaded to the robot → the robot runs it while a camera captures tip images → the liquid analyser scores each image → the score is fed back to the optimiser. This repeats until convergence or the experiment cap is reached.
+Each iteration: the optimiser suggests parameters → a protocol file is generated and uploaded to the robot → the robot runs it while a camera captures tip images → the image subtraction analyser compares reference (empty tip) and after-dispense images to compute a dispense-quality score → the score is fed back to the optimiser. This repeats until convergence or the experiment cap is reached.
 
 ---
 
@@ -40,9 +40,10 @@ autolabproject/
 ├── autolab/                         # Main campaign orchestration package
 │   ├── runner.py                    # Entry point — runs the full campaign loop
 │   ├── config.py                    # User-editable settings (factors, limits, IPs)
-│   ├── dashboard.py                 # Live HTTP dashboard with pause/stop controls
+│   ├── dashboard.py                 # Live HTTP dashboard with pause/stop/confirm controls
 │   ├── wizard.py                    # 5-step web wizard that runs before the campaign
-│   └── protocol_gen.py              # Generates a .py protocol file per iteration
+│   ├── protocol_gen.py              # Generates a .py protocol file per iteration
+│   └── image_analysis.py            # Dye-biased image subtraction scoring pipeline
 │
 ├── robot/                           # OT-2 robot control
 │   ├── controller.py                # OT-2 HTTP REST client (no Opentrons App needed)
@@ -54,8 +55,9 @@ autolabproject/
 │   └── analysis.py                  # YOLO-NAS + HSV liquid detection pipeline
 │
 ├── optimizer/                       # Bayesian optimisation engine
-│   ├── core.py                      # DOEOptimiser class (Gaussian Process + LHS + EI)
-│   └── _sim_dashboard.py            # Internal static HTML dashboard for the optimiser
+│   ├── core.py                      # PipettingDOEOptimizer (GP + LHS + EI + liquid tracking)
+│   ├── meta_model.py                # Cross-run transfer learning (MetaModel — optional)
+│   └── _sim_dashboard.py            # Internal static HTML dashboard (legacy)
 │
 ├── models/                          # Trained model weights
 │   └── ckpt_best.pth                # YOLO-NAS weights (git-ignored — large binary)
@@ -142,21 +144,29 @@ python -m autolab.runner --no-wizard --dry-run    # dry run, no browser
 All campaign settings live in **`autolab/config.py`**. Edit this file directly, or override via the Setup Wizard at runtime.
 
 ```python
-# Which parameters to optimise and their ranges
+# Which parameters to optimise and their ranges (calibrated for p20 multi-channel)
 FACTORS = [
-    Factor("aspirate_speed", "continuous",  1.0, 200.0),   # µL/s
-    Factor("dispense_speed", "continuous",  1.0, 200.0),   # µL/s
-    Factor("air_gap",        "categorical", 0.0,   1.0, levels=[0.0, 1.0]),
-    Factor("blow_out",       "categorical", 0.0,   1.0, levels=[0.0, 1.0]),
+    Factor("aspirate_speed", "continuous",  0.0, 31.0),    # µL/s
+    Factor("dispense_speed", "continuous",  1.0, 31.0),    # µL/s
+    Factor("air_gap",        "categorical", 0.0,  1.0, levels=[0.0, 1.0]),
+    Factor("blow_out",       "categorical", 0.0,  1.0, levels=[0.0, 1.0]),
 ]
+
+# Liquid being optimised
+LIQUID_TYPE        = "water"    # "water", "glycerol", or "ethanol"
+CONCENTRATION_PCT  = 100.0
+
+# Image analysis
+IMAGE_THRESHOLD    = 12         # Binary threshold for image subtraction
+DYE_COLOR          = "blue"     # Dye colour bias: "red", "blue", or "green"
 
 N_INITIAL          = 5      # LHS points before Bayesian optimisation begins
 MAX_ITERATIONS     = 20     # Hard cap on total experiments
-CONVERGENCE_TOL    = 1.0    # Stop if best accuracy improves < 1% over the window
+CONVERGENCE_TOL    = 1.0    # Stop if best score improves < 1% over the window
 CONVERGENCE_WINDOW = 5      # Number of consecutive BO iterations to check
 
-ROBOT_IP           = None   # None = auto-detect across known IPs
-CAMERA_SERVER_IP   = "169.254.84.3"
+ROBOT_IP           = "169.254.83.111"
+CAMERA_SERVER_IP   = "127.0.0.1"
 CAMERA_SERVER_PORT = 8080
 ```
 
@@ -185,7 +195,7 @@ CAMERA_SERVER_PORT = 8080
 | 1 | `opentrons_96_filtertiprack_20ul` | 20 µL filter tip rack |
 | 2 | `corning_96_wellplate_330ul` | Destination well plate |
 | 4 | `agilent_1_reservoir_290ml` | Source liquid reservoir |
-| 7 | `agilent_1_reservoir_290ml` | Camera reservoir — pipette moves here for every image; camera films tips from above |
+| 7 | `corning_96_wellplate_360ul_flat` | Camera plate — pipette moves here for every image; camera films tips from above |
 | TRASH | *(fixed)* | Built-in trash bin, top-right corner |
 
 The pipette (`p20_multi_gen2`) is on the **left mount**.
@@ -225,12 +235,14 @@ After every completed experiment the campaign enters an **Awaiting Confirmation*
 
 ## Results
 
-After each iteration, a row is appended to **`experiments/results/results.csv`**:
+After each iteration, a row is appended to **`results/results.csv`**:
 
 ```
 iteration, timestamp, phase, aspirate_speed, dispense_speed, air_gap, blow_out,
-accuracy_%, ei, best_so_far_%, protocol_file
+score, ei, best_so_far, protocol_file
 ```
+
+A persistent cross-run training log is also maintained at **`results/training_data.csv`** with additional metadata (liquid type, concentration, pixel counts, run ID).
 
 At campaign end:
 - `experiments/results/convergence_plot.png` — accuracy vs. iteration chart
@@ -251,23 +263,32 @@ iter_003_asp174.4_disp26_ag-off_bo-on_20260326_143022.py
 
 ---
 
-## Liquid Analysis
+## Image Analysis — Dispense Quality Scoring
 
-The analyser (`camera/analysis_script/liquid_analysis.py`) scores each iteration by comparing captured tip images to expected states:
+The analyser (`autolab/image_analysis.py`) scores each iteration by comparing a reference image (empty tips after pick-up) against the after-dispense image using dye-biased image subtraction.
 
-| Capture moment | Expected | Meaning |
-|----------------|----------|---------|
-| `before_aspirate` | No liquid | Tip should be empty |
-| `after_aspirate` | Liquid present | Tip should be loaded |
-| `before_dispense` | Liquid present | Liquid still in tip |
-| `after_dispense` | No liquid | Clean dispense — the key quality metric |
+**Pipeline per column:**
 
-**Accuracy = % of images where the detected state matches the expected state.**
+1. **Reference image** — captured at `pick_up_tip` (empty tips)
+2. **Target image** — captured at `after_dispense` (should be empty if dispense was clean)
+3. **Dye-biased diff** — opponent-channel signal amplifies the configured dye colour (default: blue) while suppressing neutral background noise
+4. **Threshold + morphology** — binary mask isolating residual liquid pixels
+5. **Score** — `100 × (1 - residual_pixels / MAX_RESIDUAL_PIXELS)` — fewer residual pixels = higher score (0-100)
 
-Two detection methods are combined:
-1. **YOLO-NAS** — detects liquid bounding boxes and fill ratio (`YOLO/OT2-Computer-Vision/Trained Models_NAS/ckpt_best.pth`).
-   Model trained and provided by [BDD-G/OT2-Computer-Vision](https://github.com/BDD-G/OT2-Computer-Vision).
-2. **HSV colour segmentation** — detects green liquid by hue/saturation thresholding (primary signal for green dye)
+The overall iteration score is the mean of per-column scores, with a 20-point penalty per column that could not be measured.
+
+No model weights or GPU are required — the pipeline uses only OpenCV.
+
+### Cross-Run Transfer Learning (optional)
+
+The `MetaModel` (`optimizer/meta_model.py`) fits per-parameter Gaussian Processes across completed runs to predict optimal parameters for a new liquid + concentration. Requires at least 3 distinct runs.
+
+```python
+from optimizer.meta_model import MetaModel
+meta = MetaModel()
+meta.fit("results/training_data.csv")
+meta.predict("ethanol", 100.0)
+```
 
 ---
 
@@ -294,12 +315,12 @@ pip install -r requirements.txt
 
 | Package | Version | Use |
 |---------|---------|-----|
-| `numpy` | ==1.26.4 | Array operations; pinned `<2` for `super-gradients` compatibility |
+| `numpy` | >=1.24 | Array operations |
 | `scipy` | >=1.11 | Gaussian Process optimisation, Latin Hypercube Sampling |
 | `scikit-learn` | >=1.3 | `GaussianProcessRegressor`, Matern kernel |
 | `matplotlib` | >=3.7 | Convergence plot saved to PNG (Agg backend — no display required) |
-| `opencv-python` | >=4.8 | Camera capture (`camera_server.py`) and image processing |
-| `super-gradients` | >=3.7 | YOLO-NAS model loading for liquid detection |
+| `opencv-python` | >=4.8 | Camera capture (`camera/server.py`) and image subtraction analysis |
+| `pandas` | >=2.0 | Cross-run MetaModel analysis (optional — only `optimizer/meta_model.py`) |
 
 Everything else (`http.server`, `pathlib`, `threading`, `urllib`, etc.) is Python standard library — no install needed.
 

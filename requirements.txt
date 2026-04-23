@@ -1,12 +1,8 @@
 # AutoLab dependencies
 # Install with:  pip install -r requirements.txt
-#
-# NOTE: super-gradients pins numpy<2 and torch. If you only need the
-#       campaign / dashboard / OT-2 control and NOT the YOLO inference,
-#       omit the super-gradients block below.
 
 # ── Numerical / optimisation ──────────────────────────────────────────────────
-numpy==1.26.4           # array ops; pinned to <2 for super-gradients compatibility
+numpy>=1.24             # array ops
 scipy>=1.11             # Gaussian Process optimisation, Latin Hypercube Sampling
 scikit-learn>=1.3       # GaussianProcessRegressor, Matern / RBF kernels
 
@@ -14,12 +10,16 @@ scikit-learn>=1.3       # GaussianProcessRegressor, Matern / RBF kernels
 matplotlib>=3.7         # convergence plot saved to PNG (Agg backend, no display needed)
 
 # ── Computer vision ───────────────────────────────────────────────────────────
-opencv-python>=4.8      # camera capture (camera_server.py) and image processing
+opencv-python>=4.8      # camera capture (camera/server.py) and image subtraction analysis
 
-# ── YOLO-NAS inference (liquid detection) ─────────────────────────────────────
-# Requires a CUDA-capable GPU for reasonable speed; CPU inference is supported
-# but slow. super-gradients pulls in torch automatically.
-super-gradients>=3.7    # YOLO-NAS model loading (camera/analysis_script/liquid_analysis.py)
+# ── Data analysis (optional — only used by MetaModel for cross-run learning) ─
+pandas>=2.0             # optimizer/meta_model.py — cross-run transfer learning
+
+# ── YOLO-NAS inference (legacy — no longer used by the main pipeline) ────────
+# The main image analysis now uses OpenCV-only image subtraction (autolab/image_analysis.py).
+# super-gradients + YOLO-NAS weights are only needed if you want to run the old
+# camera/analysis.py pipeline independently. Uncomment the line below if needed:
+# super-gradients>=3.7
 
 # ── Standard library (no install needed) ─────────────────────────────────────
 # argparse, ast, csv, dataclasses, datetime, http.server, itertools, json,

@@ -499,11 +499,11 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
           <div class="slot-name">Trash Bin</div>
         </div>
         <!-- Row 3: 7, 8, 9 -->
-        <div class="slot camera-slot" title="Slot 7 — Camera reservoir. The pipette moves here and the camera films the tips from above.">
+        <div class="slot camera-slot" title="Slot 7 — Camera plate. The pipette moves here and the camera films the tips from above.">
           <div class="slot-num">Slot 7</div>
           <div class="slot-indicator">CAM</div>
-          <div class="slot-name">Camera Reservoir</div>
-          <div class="slot-desc">agilent_1_reservoir_290ml</div>
+          <div class="slot-name">Camera Plate</div>
+          <div class="slot-desc">corning_96_wellplate_360ul_flat</div>
         </div>
         <div class="slot empty" title="Slot 8 — Not used in this protocol">
           <div class="slot-num">Slot 8</div>
@@ -562,7 +562,7 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
       <div class="note">
         The multi-channel pipette is mounted on the <strong>left arm</strong>.
         Fill the <strong>source reservoir (Slot 4)</strong> with your liquid before clicking Next.
-        Slot 7 acts as the camera filming position — leave it empty or place a labware-height placeholder.
+        Slot 7 holds a flat-bottom 96-well plate used as the camera filming position — the pipette moves here for tip photos.
       </div>
     </div>
 
