@@ -199,11 +199,19 @@ class OT2:
             return data.get("data", [])
         return []
 
-    def create_run(self, protocol_id: str, run_time_params: dict = None) -> str:
-        """Create a run from a protocol ID. Returns run ID."""
+    def create_run(self, protocol_id: str, run_time_params: dict = None,
+                    labware_offsets: list = None) -> str:
+        """Create a run from a protocol ID. Returns run ID.
+
+        *labware_offsets* is a list of offset dicts, each with
+        ``definitionUri``, ``location`` (``{"slotName": "N"}``), and
+        ``vector`` (``{"x": ..., "y": ..., "z": ...}``).
+        """
         payload = {"data": {"protocolId": protocol_id}}
         if run_time_params:
             payload["data"]["runTimeParameterValues"] = run_time_params
+        if labware_offsets:
+            payload["data"]["labwareOffsets"] = labware_offsets
 
         status, data = _post(f"{self.base}/runs", data=payload)
         if isinstance(data, dict) and "data" in data:
@@ -225,6 +233,11 @@ class OT2:
         payload = {"data": {"actionType": "pause"}}
         _post(f"{self.base}/runs/{run_id}/actions", data=payload)
         print(f"[RUN] Paused: {run_id}")
+
+    def resume_run(self, run_id: str) -> None:
+        payload = {"data": {"actionType": "play"}}
+        _post(f"{self.base}/runs/{run_id}/actions", data=payload)
+        print(f"[RUN] Resumed: {run_id}")
 
     def stop_run(self, run_id: str) -> None:
         payload = {"data": {"actionType": "stop"}}

@@ -49,9 +49,36 @@ TRANSFER_VOLUME = 20    # µL per transfer
 ROBOT_IP           = "169.254.83.111" # Wired USB IP of the OT-2
 CAMERA_SERVER_IP   = "127.0.0.1"     # IP of the computer running camera/server.py (localhost — server runs on this machine)
 CAMERA_SERVER_PORT = 8080
-CAMERA_INDEX       = 0                # USB camera device index (0 = first/built-in, 1 = first USB cam)
+CAMERA_INDEX       = 0                # USB camera device index (0 = default camera)
 SETTLE_SECONDS     = 2                # Seconds to wait before capturing image
 CAMERA_HEIGHT_MM   = 1                # Height above slot 7 plate top for photo
+
+# ── Labware offsets (from Labware Position Check) ────────────────────────────
+# These XYZ offsets are applied when creating each OT-2 run so the robot uses
+# the calibrated positions.  Update these after re-running LPC in the
+# Opentrons App.  Set to an empty list to skip (robot uses nominal positions).
+LABWARE_OFFSETS = [
+    {
+        "definitionUri": "opentrons/agilent_1_reservoir_290ml/1",
+        "location": {"slotName": "4"},
+        "vector": {"x": -2.2, "y": -3.0, "z": 0.0},
+    },
+    {
+        "definitionUri": "opentrons/corning_96_wellplate_330ul/1",
+        "location": {"slotName": "2"},
+        "vector": {"x": 0.7, "y": -3.3, "z": 10.1},
+    },
+    {
+        "definitionUri": "opentrons/corning_96_wellplate_360ul_flat/1",
+        "location": {"slotName": "7"},
+        "vector": {"x": 3.0, "y": -1.9, "z": 18.5},
+    },
+    {
+        "definitionUri": "opentrons/opentrons_96_filtertiprack_20ul/1",
+        "location": {"slotName": "1"},
+        "vector": {"x": 1.4, "y": -4.3, "z": -0.1},
+    },
+]
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD_PORT = 9999     # Open http://localhost:9999 after starting the campaign

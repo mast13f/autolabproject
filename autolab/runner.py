@@ -160,13 +160,39 @@ def _start_camera_server(camera_ip: str, camera_port: int,
     return proc
 
 
+# ── Pause helper ─────────────────────────────────────────────────────────────
+
+def _handle_pause(dashboard) -> str | None:
+    """Check dashboard state and block while paused.
+
+    Returns ``None`` to continue, or a stop reason string if the user
+    stopped the campaign while it was paused.
+    """
+    state = dashboard.get_state()
+    if state == "paused":
+        print("  [PAUSED] Waiting for Resume in dashboard…")
+        while True:
+            time.sleep(2)
+            s = dashboard.get_state()
+            if s in ("stopped", "stop_now"):
+                return "Campaign stopped by user"
+            if s == "running":
+                print("  [RESUMED]")
+                return None
+    if state in ("stopped", "stop_now"):
+        return "Campaign stopped by user"
+    return None
+
+
 # ── Interruptible OT-2 run ────────────────────────────────────────────────────
 
 def run_ot2_interruptible(robot, protocol_path: Path, run_time_params: dict,
-                           dashboard, iteration: int) -> str:
+                           dashboard, iteration: int,
+                           labware_offsets: list | None = None) -> str:
     """
     Upload and start a protocol, polling status every 5 s.
     Checks dashboard state on every poll:
+      - "paused"   → pauses the OT-2 and waits for resume
       - "stop_now" → immediately stops the robot and returns "stopped_by_user"
     Returns the final OT-2 run status string.
     """
@@ -177,18 +203,53 @@ def run_ot2_interruptible(robot, protocol_path: Path, run_time_params: dict,
     protocol_id = robot.upload_protocol(str(protocol_path))
 
     print(f"  Creating run…")
-    run_id = robot.create_run(protocol_id, run_time_params)
+    run_id = robot.create_run(protocol_id, run_time_params,
+                               labware_offsets=labware_offsets)
     robot.start_run(run_id)
     dashboard.set_robot_status(f"OT-2 running — Iter {iteration:03d}", "running", run_id, iteration)
 
     last_status = None
     while True:
-        # ── Check for immediate stop ──────────────────────────────────
-        if dashboard.get_state() == "stop_now":
+        # ── Check for pause / immediate stop ─────────────────────────
+        ds = dashboard.get_state()
+        if ds == "stop_now":
             print("\n  [STOP NOW] Halting robot immediately…")
             robot.stop_run(run_id)
             dashboard.set_robot_status("Stopped by user", "stopped", run_id, iteration)
             return "stopped_by_user"
+        if ds == "paused":
+            print("  [PAUSED] Pausing OT-2…")
+            try:
+                robot.pause_run(run_id)
+            except Exception:
+                pass  # robot may not support pause, or run already idle
+            dashboard.set_robot_status(
+                f"OT-2 paused — Iter {iteration:03d}", "paused", run_id, iteration
+            )
+            while True:
+                time.sleep(2)
+                s = dashboard.get_state()
+                if s == "stop_now":
+                    print("\n  [STOP NOW] Halting robot immediately…")
+                    robot.stop_run(run_id)
+                    dashboard.set_robot_status("Stopped by user", "stopped", run_id, iteration)
+                    return "stopped_by_user"
+                if s in ("stopped",):
+                    print("\n  [STOP] Stopping after current action…")
+                    robot.stop_run(run_id)
+                    dashboard.set_robot_status("Stopped by user", "stopped", run_id, iteration)
+                    return "stopped_by_user"
+                if s == "running":
+                    print("  [RESUMED] Resuming OT-2…")
+                    try:
+                        robot.resume_run(run_id)
+                    except Exception:
+                        # Fallback: re-issue play action
+                        pass
+                    dashboard.set_robot_status(
+                        f"OT-2 running — Iter {iteration:03d}", "running", run_id, iteration
+                    )
+                    break
 
         run = robot.get_run(run_id)
         status = run.get("status", "unknown")
@@ -332,28 +393,11 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     # ── Main loop ─────────────────────────────────────────────────────────
     while True:
 
-        # ── Control state check ───────────────────────────────────────
-        state = dashboard.get_state()
-
-        if state in ("stopped", "stop_now"):
-            stop_reason = "Campaign stopped by user"
+        # ── Control state check (pause / stop) ────────────────────────
+        stop_reason = _handle_pause(dashboard)
+        if stop_reason:
             print(f"\n[STOP] {stop_reason}")
             break
-
-        if state == "paused":
-            print("  [PAUSED] Waiting for Resume in dashboard…")
-            while True:
-                time.sleep(3)
-                s = dashboard.get_state()
-                if s == "stopped":
-                    stop_reason = "Campaign stopped by user"
-                    break
-                if s == "running":
-                    print("  [RESUMED]")
-                    break
-            if stop_reason:
-                break
-            continue
 
         # ── Hard cap check ────────────────────────────────────────────
         if optimizer.iteration >= max_iterations:
@@ -421,6 +465,12 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             camera_height_mm=cfg.CAMERA_HEIGHT_MM,
         )
 
+        # ── Pause check before experiment ────────────────────────────
+        stop_reason = _handle_pause(dashboard)
+        if stop_reason:
+            print(f"\n[STOP] {stop_reason}")
+            break
+
         # ── Run experiment ────────────────────────────────────────────
         iter_dir = cfg.RESULTS_DIR / f"iter_{n:03d}"
         iter_dir.mkdir(parents=True, exist_ok=True)
@@ -454,7 +504,8 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             ot2_result = "failed"
             try:
                 ot2_result = run_ot2_interruptible(
-                    robot, protocol_path, run_time_params, dashboard, n
+                    robot, protocol_path, run_time_params, dashboard, n,
+                    labware_offsets=cfg.LABWARE_OFFSETS,
                 )
             except Exception as e:
                 print(f"  [ERROR] OT-2 run failed: {e}")

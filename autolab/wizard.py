@@ -1484,6 +1484,95 @@ class SetupWizard:
         except Exception as e:
             items.append({"name": "Tip Length Calibration", "detail": str(e), "status": "warn"})
 
+        # ── Labware offset check (Labware Position Check / LPC) ──────────
+        # The labware offsets tell the robot the exact XYZ position of each
+        # labware item on the deck.  Without them the robot uses nominal
+        # positions which can be off by millimetres — enough to miss tips or
+        # aspirate from the wrong height.
+        required_labware = {
+            "opentrons_96_filtertiprack_20ul":   "Slot 1 — Tip Rack",
+            "corning_96_wellplate_330ul":         "Slot 2 — Well Plate",
+            "agilent_1_reservoir_290ml":          "Slot 4 — Source Reservoir",
+            "corning_96_wellplate_360ul_flat":    "Slot 7 — Camera Plate",
+        }
+        try:
+            with _ot2_get_cal(f"{base}/runs/offsets", timeout=5) as r:
+                offsets_data = json.loads(r.read().decode())
+            offset_list = offsets_data.get("data", [])
+            calibrated_uris = {
+                o.get("definitionUri", "") for o in offset_list
+            }
+            missing = []
+            for uri_fragment, label in required_labware.items():
+                if not any(uri_fragment in uri for uri in calibrated_uris):
+                    missing.append(label)
+            if missing:
+                items.append({
+                    "name": "Labware Offset Calibration",
+                    "detail": f"Missing offsets for: {', '.join(missing)}. "
+                              f"Run Labware Position Check in the Opentrons App before starting.",
+                    "status": "error",
+                })
+            else:
+                items.append({
+                    "name": "Labware Offset Calibration",
+                    "detail": f"Offsets found for all {len(required_labware)} required labware items",
+                    "status": "ok",
+                })
+        except Exception:
+            # /runs/offsets may not exist on older firmware — try legacy approach
+            try:
+                # Check the most recent run for labware offsets
+                with _ot2_get_cal(f"{base}/runs", timeout=5) as r:
+                    runs_data = json.loads(r.read().decode())
+                runs_list = runs_data.get("data", [])
+                if runs_list:
+                    latest_run_id = runs_list[-1].get("id", "")
+                    with _ot2_get_cal(f"{base}/runs/{latest_run_id}", timeout=5) as r:
+                        run_data = json.loads(r.read().decode())
+                    run_detail = run_data.get("data", run_data)
+                    lw_offsets = run_detail.get("labwareOffsets", [])
+                    if lw_offsets:
+                        offset_uris = {o.get("definitionUri", "") for o in lw_offsets}
+                        missing = []
+                        for uri_fragment, label in required_labware.items():
+                            if not any(uri_fragment in uri for uri in offset_uris):
+                                missing.append(label)
+                        if missing:
+                            items.append({
+                                "name": "Labware Offset Calibration",
+                                "detail": f"Missing offsets for: {', '.join(missing)}. "
+                                          f"Run Labware Position Check in the Opentrons App.",
+                                "status": "error",
+                            })
+                        else:
+                            items.append({
+                                "name": "Labware Offset Calibration",
+                                "detail": f"Offsets found for all {len(required_labware)} required labware",
+                                "status": "ok",
+                            })
+                    else:
+                        items.append({
+                            "name": "Labware Offset Calibration",
+                            "detail": "No labware offsets found. Run Labware Position Check "
+                                      "in the Opentrons App before starting the campaign.",
+                            "status": "error",
+                        })
+                else:
+                    items.append({
+                        "name": "Labware Offset Calibration",
+                        "detail": "No previous runs found — labware offsets not yet set. "
+                                  "Run Labware Position Check in the Opentrons App.",
+                        "status": "error",
+                    })
+            except Exception as e2:
+                items.append({
+                    "name": "Labware Offset Calibration",
+                    "detail": f"Could not check labware offsets: {e2}. "
+                              f"Verify calibration manually in the Opentrons App.",
+                    "status": "warn",
+                })
+
         return {"items": items}
 
 
