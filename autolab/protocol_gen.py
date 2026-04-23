@@ -56,10 +56,11 @@ def generate_protocol(
     protocols_dir: Path,
     num_columns: int = 12,
     transfer_volume: int = 20,
-    camera_ip: str = "169.254.84.3",
+    camera_ip: str = "169.254.203.171",
     camera_port: int = 8080,
     settle_seconds: int = 2,
     camera_height_mm: int = 1,
+    tip_column: int = 1,
 ) -> Path:
     """
     Generate a runnable OT-2 protocol file with the given parameters baked in.
@@ -68,18 +69,24 @@ def generate_protocol(
         params:           Dict of factor_name → value from the optimizer.
         iteration:        Current iteration number (used in filename + metadata).
         protocols_dir:    Directory to save the file in.
-        num_columns:      Number of plate columns to transfer into.
+        num_columns:      Kept for backwards compatibility (unused when tip_column
+                          is set — each protocol now uses exactly one column).
         transfer_volume:  µL to transfer per column.
         camera_ip:        Camera server IP (default for the runtime param).
         camera_port:      Camera server port.
         settle_seconds:   Wait time before image capture.
         camera_height_mm: Height above slot 7 for the camera photo spot.
+        tip_column:       Which tip-rack / destination column (1-12) to use.
 
     Returns:
         Path to the saved protocol file.
     """
     protocols_dir = Path(protocols_dir)
     protocols_dir.mkdir(parents=True, exist_ok=True)
+
+    if not 1 <= int(tip_column) <= 12:
+        raise ValueError(f"tip_column must be in 1..12, got {tip_column}")
+    tip_column = int(tip_column)
 
     # Extract known factors (fall back to sensible defaults)
     aspirate_speed = float(params.get("aspirate_speed", 7.6))
@@ -99,14 +106,14 @@ def generate_protocol(
     if air_gap:
         aspirate_volume_code = f"TRANSFER_VOLUME - {air_gap_vol}"
         air_gap_after_aspirate = (
-            f"        pipette.air_gap({air_gap_vol})  # prevent dripping\n"
+            f"    pipette.air_gap({air_gap_vol})  # prevent dripping\n"
         )
     else:
         aspirate_volume_code = "TRANSFER_VOLUME"
         air_gap_after_aspirate = ""
 
     blow_out_code = (
-        "        pipette.blow_out(dest)  # expel any residual\n"
+        "    pipette.blow_out(dest)  # expel any residual\n"
         if blow_out else ""
     )
 
@@ -142,7 +149,7 @@ AIR_GAP        = {bool(air_gap)}         # add {air_gap_vol} µL air gap after a
 BLOW_OUT       = {bool(blow_out)}        # blow out at destination after dispense
 
 # ── Fixed parameters ──────────────────────────────────────────────────────────
-NUM_COLUMNS     = {num_columns}
+TIP_COLUMN      = {tip_column}          # Tip-rack / destination column used this iteration (1-12)
 TRANSFER_VOLUME = {transfer_volume}
 
 
@@ -154,9 +161,8 @@ def add_parameters(parameters: protocol_api.Parameters):
         default="{camera_ip}",
         choices=[
             {{"display_name": "{camera_ip}", "value": "{camera_ip}"}},
-            {{"display_name": "169.254.84.3",  "value": "169.254.84.3"}},
-            {{"display_name": "172.26.4.16",   "value": "172.26.4.16"}},
-            {{"display_name": "172.26.4.17",   "value": "172.26.4.17"}},
+            {{"display_name": "169.254.203.171 (USB)", "value": "169.254.203.171"}},
+            {{"display_name": "172.26.107.3 (Wi-Fi)",  "value": "172.26.107.3"}},
         ],
     )
     parameters.add_int(
@@ -242,48 +248,46 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(seconds=settle)
         capture(action, details)
 
-    tip_cols  = [tip_rack[f"A{{i}}"]   for i in range(1, NUM_COLUMNS + 1)]
-    dest_cols = [well_plate[f"A{{i}}"] for i in range(1, NUM_COLUMNS + 1)]
+    # Single column per iteration — uses TIP_COLUMN of both tip rack and well plate
+    col      = f"A{{TIP_COLUMN}}"
+    tip_well = tip_rack[col]
+    dest     = well_plate[col]
 
     protocol.comment(
-        f"=== AutoLab Iter {iteration}: "
+        f"=== AutoLab Iter {iteration} — Column {{col}}: "
         f"asp={{ASPIRATE_SPEED}} disp={{DISPENSE_SPEED}} "
         f"air_gap={{AIR_GAP}} blow_out={{BLOW_OUT}} ==="
     )
 
-    for idx, (tip_well, dest) in enumerate(zip(tip_cols, dest_cols)):
-        col = f"A{{idx + 1}}"
-        protocol.comment(f"--- Column {{col}} ---")
+    # Pick up tips
+    pipette.pick_up_tip(tip_well)
 
-        # Pick up tips
-        pipette.pick_up_tip(tip_well)
+    # PICK_UP_TIP capture — reference image for subtraction analysis
+    move_and_capture("pick_up_tip", f"col_{{col}}")
 
-        # PICK_UP_TIP capture — reference image for subtraction analysis
-        move_and_capture("pick_up_tip", f"col_{{col}}")
+    # Pre-wet
+    pipette.aspirate(aspirate_vol, reservoir["A1"].bottom(z=1), rate=asp_ratio)
+    pipette.dispense(aspirate_vol, reservoir["A1"].bottom(z=1), rate=disp_ratio)
 
-        # Pre-wet
-        pipette.aspirate(aspirate_vol, reservoir["A1"].bottom(z=1), rate=asp_ratio)
-        pipette.dispense(aspirate_vol, reservoir["A1"].bottom(z=1), rate=disp_ratio)
+    # BEFORE ASPIRATE — empty tip baseline image
+    move_and_capture("before_aspirate", f"col_{{col}}_empty")
 
-        # BEFORE ASPIRATE — empty tip baseline image
-        move_and_capture("before_aspirate", f"col_{{col}}_empty")
-
-        # ASPIRATE
-        pipette.aspirate(aspirate_vol, reservoir["A1"].bottom(z=1), rate=asp_ratio)
+    # ASPIRATE
+    pipette.aspirate(aspirate_vol, reservoir["A1"].bottom(z=1), rate=asp_ratio)
 {air_gap_after_aspirate}
-        # AFTER ASPIRATE — liquid-filled tips
-        move_and_capture("after_aspirate", f"col_{{col}}_filled")
+    # AFTER ASPIRATE — liquid-filled tips
+    move_and_capture("after_aspirate", f"col_{{col}}_filled")
 
-        # BEFORE DISPENSE
-        move_and_capture("before_dispense", f"col_{{col}}_pre_dispense")
+    # BEFORE DISPENSE
+    move_and_capture("before_dispense", f"col_{{col}}_pre_dispense")
 
-        # DISPENSE
-        pipette.dispense(aspirate_vol, dest.bottom(z=0.3), rate=disp_ratio)
+    # DISPENSE
+    pipette.dispense(aspirate_vol, dest.bottom(z=0.3), rate=disp_ratio)
 {blow_out_code}
-        # AFTER DISPENSE — should be empty (key quality metric)
-        move_and_capture("after_dispense", f"col_{{col}}_post_dispense")
+    # AFTER DISPENSE — should be empty (key quality metric)
+    move_and_capture("after_dispense", f"col_{{col}}_post_dispense")
 
-        pipette.drop_tip()
+    pipette.drop_tip()
 
     protocol.comment("=== Protocol complete ===")
 '''

@@ -26,18 +26,14 @@ import numpy as np
 
 # ── Tuneable constants ────────────────────────────────────────────────────────
 
-DEFAULT_THRESHOLD = 12        # Binary threshold for diff mask
-BLUR_KERNEL = 3               # Gaussian blur kernel size
-ROI_TOP_FRACTION = 0.25       # Top of ROI band (fraction of image height)
-ROI_BOTTOM_FRACTION = 0.80    # Bottom of ROI band
-MIN_CONTOUR_AREA = 8          # Blobs smaller than this are noise
-MAX_ASPECT_RATIO = 3.0        # Max h/w for small blobs (shaft-artifact filter)
-LARGE_BLOB_AREA = 200         # Always keep blobs >= this size
-DYE_COLOR = "blue"            # "red", "blue", or "green"
-DYE_WEIGHT = 0.80             # Weight for dye-channel diff
-GRAY_WEIGHT = 0.20            # Weight for grayscale diff
-ALIGN_IMAGES = False          # Enable ECC sub-pixel alignment
-MAX_RESIDUAL_PIXELS = 5000    # Worst-case pixel count (score = 0)
+DEFAULT_THRESHOLD = 10        # Minimum per-pixel increase in blue-dominance between ref and target
+ABS_BLUE_THRESHOLD = 6        # Target pixel must also be this much more blue than red (filters grey shaft-edge noise)
+ROI_TOP_FRACTION = 0.55       # Top of ROI band — tip bottoms start roughly mid-frame
+ROI_BOTTOM_FRACTION = 0.95    # Bottom of ROI band — catch hanging droplets below tips too
+MIN_CONTOUR_AREA = 60         # Small specks (< this) are noise from lighting drift on the background
+DYE_COLOR = "blue"            # "red", "blue", or "green" — dictates which opponent channel we sample
+ALIGN_IMAGES = False          # Enable ECC sub-pixel alignment (rarely needed — static camera)
+MAX_RESIDUAL_PIXELS = 30000   # Worst-case dye-pixel count (score = 0). ~20k is a fully-residue frame.
 
 
 # ── Image alignment ──────────────────────────────────────────────────────────
@@ -64,76 +60,36 @@ def align_images(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
         return img2
 
 
-# ── Dye-biased diff ──────────────────────────────────────────────────────────
+# ── Dye-specific residue detection ───────────────────────────────────────────
 
-def build_diff_image(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
-    """Build a sensitivity-enhanced diff biased toward the configured dye colour.
+def _dye_opponent(img: np.ndarray) -> np.ndarray:
+    """Per-pixel dye-opponent channel (positive => pixel looks like the dye).
 
-    Blends a dye-specific opponent-channel signal with a standard grayscale
-    diff so the mask responds strongly to the dye while retaining some
-    sensitivity to colourless residue.
+    For blue dye this is B - R. Using the signed int16 difference keeps both
+    positive and negative values so we can compute real gains later.
     """
-    gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
-    gray2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
-    gray_diff = cv2.absdiff(gray1, gray2).astype(np.float32)
-
-    f1 = img1.astype(np.float32)
-    f2 = img2.astype(np.float32)
-
+    f = img.astype(np.int16)
     dye = DYE_COLOR.lower()
+    if dye == "blue":
+        return f[:, :, 0] - f[:, :, 2]            # B - R
     if dye == "red":
-        signal1 = f1[:, :, 2] - f1[:, :, 0]   # R - B
-        signal2 = f2[:, :, 2] - f2[:, :, 0]
-    elif dye == "blue":
-        signal1 = f1[:, :, 0] - f1[:, :, 2]   # B - R
-        signal2 = f2[:, :, 0] - f2[:, :, 2]
-    elif dye == "green":
-        signal1 = f1[:, :, 1] - (f1[:, :, 2] + f1[:, :, 0]) / 2
-        signal2 = f2[:, :, 1] - (f2[:, :, 2] + f2[:, :, 0]) / 2
-    else:
-        raise ValueError(f"Unknown DYE_COLOR '{DYE_COLOR}'. Choose 'red', 'blue', or 'green'.")
+        return f[:, :, 2] - f[:, :, 0]            # R - B
+    if dye == "green":
+        return f[:, :, 1] - (f[:, :, 2] + f[:, :, 0]) // 2
+    raise ValueError(f"Unknown DYE_COLOR '{DYE_COLOR}'. Choose 'red', 'blue', or 'green'.")
 
-    dye_diff = np.abs(signal1 - signal2)
-    combined = DYE_WEIGHT * dye_diff + GRAY_WEIGHT * gray_diff
-    return np.clip(combined, 0, 255).astype(np.uint8)
-
-
-# ── Contour filtering ────────────────────────────────────────────────────────
-
-def _filter_contours(mask: np.ndarray) -> np.ndarray:
-    """Keep only contours that look like real liquid changes.
-
-    Small specks (< MIN_CONTOUR_AREA) are noise.  Large blobs
-    (>= LARGE_BLOB_AREA) are always kept.  Mid-size blobs are rejected
-    if too elongated (shaft-edge artefacts).
-    """
-    filtered = np.zeros_like(mask)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < MIN_CONTOUR_AREA:
-            continue
-        if area >= LARGE_BLOB_AREA:
-            cv2.drawContours(filtered, [cnt], -1, 255, thickness=cv2.FILLED)
-            continue
-        x, y, w, h = cv2.boundingRect(cnt)
-        if h / max(w, 1) > MAX_ASPECT_RATIO:
-            continue
-        cv2.drawContours(filtered, [cnt], -1, 255, thickness=cv2.FILLED)
-    return filtered
-
-
-# ── Core subtraction ─────────────────────────────────────────────────────────
 
 def subtract_images(
     img1: np.ndarray,
     img2: np.ndarray,
     threshold: int = DEFAULT_THRESHOLD,
 ) -> Tuple[np.ndarray, np.ndarray, int]:
-    """Subtract two images and return ``(diff, mask, changed_pixel_count)``.
+    """Detect dye residue in *img2* using *img1* (reference / empty tips) as baseline.
 
-    Pipeline: optional ECC alignment → dye-biased diff → blur → threshold
-    → ROI band mask → morphology → shape filter.
+    Returns ``(diff_visual, mask, dye_pixel_count)``. A pixel is counted as
+    dye residue only when (a) it became notably more dye-coloured between
+    the reference and target, AND (b) the target pixel is absolutely
+    dye-coloured (screens out shaft-edge grey noise and lighting drift).
     """
     if img1 is None or img2 is None:
         raise ValueError("One or both images could not be loaded.")
@@ -145,22 +101,34 @@ def subtract_images(
     if ALIGN_IMAGES:
         img2 = align_images(img1, img2)
 
-    diff = build_diff_image(img1, img2)
-    blurred = cv2.GaussianBlur(diff, (BLUR_KERNEL, BLUR_KERNEL), 0)
-    _, mask = cv2.threshold(blurred, threshold, 255, cv2.THRESH_BINARY)
+    dye_ref = _dye_opponent(img1)
+    dye_tgt = _dye_opponent(img2)
+    gain    = dye_tgt - dye_ref                    # +ve where target is bluer than ref
+    diff_visual = np.clip(gain, 0, 255).astype(np.uint8)
+
+    m_gain = gain >= int(threshold)
+    m_abs  = dye_tgt >= int(ABS_BLUE_THRESHOLD)
 
     roi_top = int(h * ROI_TOP_FRACTION)
-    roi_bottom = int(h * ROI_BOTTOM_FRACTION)
-    roi_mask = np.zeros_like(mask)
-    roi_mask[roi_top:roi_bottom, :] = 255
-    mask = cv2.bitwise_and(mask, roi_mask)
+    roi_bot = int(h * ROI_BOTTOM_FRACTION)
+    band = np.zeros((h, w), dtype=bool)
+    band[roi_top:roi_bot, :] = True
 
-    kernel = np.ones((3, 3), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    mask = _filter_contours(mask)
+    raw = (m_gain & m_abs & band).astype(np.uint8) * 255
 
-    return diff, mask, int(np.count_nonzero(mask))
+    # Clean up isolated specks, then close small gaps inside true residue blobs.
+    k = np.ones((3, 3), np.uint8)
+    cleaned = cv2.morphologyEx(raw, cv2.MORPH_OPEN, k)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+
+    # Drop any contour below MIN_CONTOUR_AREA (isolated noise).
+    mask = np.zeros_like(cleaned)
+    cnts, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for c in cnts:
+        if cv2.contourArea(c) >= MIN_CONTOUR_AREA:
+            cv2.drawContours(mask, [c], -1, 255, thickness=cv2.FILLED)
+
+    return diff_visual, mask, int(np.count_nonzero(mask))
 
 
 # ── Filename parsing ─────────────────────────────────────────────────────────

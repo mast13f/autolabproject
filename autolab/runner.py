@@ -390,6 +390,11 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
     iter_records: list = []  # [{protocol_file, images_dir, analysis_dir}, ...]
     stop_reason = None
 
+    # Tip-rack column tracking — incremented per run, reset to 1 only when the
+    # user acknowledges a physical rack swap on the confirmation banner.
+    tip_column_next = 1
+    dashboard.set_tip_rack_status(next_column=tip_column_next, exhausted=False)
+
     # ── Main loop ─────────────────────────────────────────────────────────
     while True:
 
@@ -453,7 +458,10 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
         dashboard.update(optimizer, next_suggestion=params, iter_results=iter_records)
 
         # ── Generate protocol file ────────────────────────────────────
-        print(f"\n  Generating protocol file…")
+        # Use the tracked tip-rack column — advances monotonically; only reset
+        # to 1 when the user acknowledges a physical rack swap.
+        tip_column = tip_column_next
+        print(f"\n  Generating protocol file… (tip column A{tip_column})")
         protocol_path = generate_protocol(
             params, n,
             protocols_dir=cfg.PROTOCOLS_DIR,
@@ -463,6 +471,7 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             camera_port=camera_port,
             settle_seconds=cfg.SETTLE_SECONDS,
             camera_height_mm=cfg.CAMERA_HEIGHT_MM,
+            tip_column=tip_column,
         )
 
         # ── Pause check before experiment ────────────────────────────
@@ -577,6 +586,20 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             protocol_file=protocol_path.name,
         )
 
+        # ── Advance tip-rack column ───────────────────────────────────
+        # This iteration consumed column `tip_column`. If that was A12, the
+        # rack is now exhausted — next iteration cannot run until the user
+        # swaps racks via the dashboard.
+        tip_column_next = tip_column + 1
+        rack_exhausted  = tip_column_next > 12
+        dashboard.set_tip_rack_status(
+            next_column=(1 if rack_exhausted else tip_column_next),
+            exhausted=rack_exhausted,
+        )
+        if rack_exhausted:
+            print(f"  [RACK] Column A12 used — tip rack is now EXHAUSTED. "
+                  f"Replace before continuing.")
+
         # ── Dashboard update ──────────────────────────────────────────
         dashboard.set_robot_status(f"Iter {n:03d} complete — score {score:.1f}", "idle", "", n)
         dashboard.update(optimizer, iter_results=iter_records)
@@ -618,6 +641,20 @@ def run_campaign(dry_run: bool = False, wizard_config: dict | None = None):
             time.sleep(2)
             s = dashboard.get_state()
             if s == "running":
+                ack = dashboard.consume_rack_replaced_ack()
+                if rack_exhausted:
+                    # Rack was exhausted — only accept progression via the
+                    # explicit "Rack Replaced" ack. Any other confirmation
+                    # is ignored (button shouldn't even be visible, but be safe).
+                    if not ack:
+                        print("  [RACK] Ignoring confirm — rack still exhausted, "
+                              "waiting for 'Rack Replaced' acknowledgement.")
+                        dashboard.set_state("awaiting_confirmation")
+                        continue
+                    tip_column_next = 1
+                    rack_exhausted = False
+                    dashboard.set_tip_rack_status(next_column=1, exhausted=False)
+                    print("  [RACK] User acknowledged rack swap — reset to column A1")
                 print("  [CONFIRMED] User confirmed — proceeding to next experiment")
                 break
             if s in ("stopped", "stop_now"):

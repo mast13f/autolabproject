@@ -47,7 +47,7 @@ TRANSFER_VOLUME = 20    # µL per transfer
 
 # ── Robot / camera settings ───────────────────────────────────────────────────
 ROBOT_IP           = "169.254.83.111" # Wired USB IP of the OT-2
-CAMERA_SERVER_IP   = "127.0.0.1"     # IP of the computer running camera/server.py (localhost — server runs on this machine)
+CAMERA_SERVER_IP   = "169.254.203.171"  # Host IP reachable from the OT-2 (USB link-local). NOT 127.0.0.1 — the protocol runs on the robot, so 127.0.0.1 would loop back to the robot itself.
 CAMERA_SERVER_PORT = 8080
 CAMERA_INDEX       = 0                # USB camera device index (0 = default camera)
 SETTLE_SECONDS     = 2                # Seconds to wait before capturing image

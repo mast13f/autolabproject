@@ -190,6 +190,11 @@ def generate_html(data: dict) -> str:
     rs_iter    = rs.get("iteration")
     dot_cls    = "dot-running" if rs_status == "running" else ("dot-error" if rs_status in ("failed","stopped") else "dot-idle")
 
+    # Tip-rack state (set by runner via set_tip_rack_status)
+    tip_rack       = data.get("tip_rack", {})
+    tip_next_col   = tip_rack.get("next_column")        # 1..12 or None
+    rack_exhausted = bool(tip_rack.get("exhausted"))
+
     # Table header for factors
     factor_th = "".join(
         f'<th>{n.replace("_"," ").title()}</th>' for n in factor_names
@@ -451,15 +456,27 @@ def generate_html(data: dict) -> str:
 
 <!-- Awaiting confirmation panel -->
 <div class="confirm-panel" style="{show_confirm}">
-  <h2>&#9888; Waiting for User Confirmation</h2>
-  <div class="confirm-msg">
-    The previous experiment has finished. You may now replace labware, refill reservoirs,
-    or make any deck changes before continuing.<br>
-    Review the <strong>Next Suggested Parameters</strong> below, then click the button to proceed.
-  </div>
-  <button class="btn btn-confirm" onclick="ctrl('confirm_next')">
-    &#9654; Confirm &amp; Run Next Experiment
-  </button>
+  {('<h2 style="color:#fca5a5">&#9888; Tip Rack Exhausted — Replace Required</h2>'
+    '<div class="confirm-msg">'
+    'All 12 columns of the tip rack in slot 1 have been used. <strong>Replace with '
+    'a fresh rack now.</strong> Also refill the reservoir / swap the well plate if needed.<br>'
+    'Clicking below acknowledges the rack has been replaced and resets the column '
+    'counter to A1.'
+    '</div>'
+    '<button class="btn btn-confirm" style="background:#dc2626" onclick="ctrl(&quot;rack_replaced&quot;)">'
+    '&#9654; Rack Replaced &mdash; Run Next Experiment'
+    '</button>')
+    if rack_exhausted else
+   ('<h2>&#9888; Waiting for User Confirmation</h2>'
+    '<div class="confirm-msg">'
+    f'The previous experiment has finished. Next iteration will use tip-rack column '
+    f'<strong>A{tip_next_col}</strong>. Replace labware or refill reservoirs if needed, '
+    'then click below to proceed.'
+    '</div>'
+    '<button class="btn btn-confirm" onclick="ctrl(&quot;confirm_next&quot;)">'
+    '&#9654; Confirm &amp; Run Next Experiment'
+    '</button>')
+  }
 </div>
 
 <!-- Stat cards -->
@@ -676,6 +693,8 @@ class CampaignDashboard:
         self._state = "running"
         self._data: dict = {}
         self._current_params: dict = {}
+        self._tip_rack: dict = {"next_column": 1, "exhausted": False}
+        self._rack_replaced_ack = False
         self._lock = threading.Lock()
         self._server: Optional[ThreadingHTTPServer] = None
 
@@ -737,6 +756,9 @@ class CampaignDashboard:
                             db._state = 'stop_now'
                         elif action == 'confirm_next' and db._state == 'awaiting_confirmation':
                             db._state = 'running'
+                        elif action == 'rack_replaced' and db._state == 'awaiting_confirmation':
+                            db._state = 'running'
+                            db._rack_replaced_ack = True
                         new = db._state
                         # Keep rendered state in sync so Pause/Resume buttons
                         # toggle correctly on the next page reload.
@@ -839,6 +861,24 @@ class CampaignDashboard:
                 "iteration":  iteration,
             }
 
+    def set_tip_rack_status(self, next_column: int, exhausted: bool):
+        """Publish tip-rack tracking state — shown on confirmation banner.
+
+        next_column: 1..12, the column the next protocol will use.
+        exhausted:   True after the rack's 12th column has been consumed, forces
+                     the user to acknowledge a physical rack swap before running.
+        """
+        with self._lock:
+            self._tip_rack = {"next_column": int(next_column), "exhausted": bool(exhausted)}
+            self._data["tip_rack"] = self._tip_rack
+
+    def consume_rack_replaced_ack(self) -> bool:
+        """Return True once (and clear) if the user clicked 'Rack Replaced'."""
+        with self._lock:
+            ack = self._rack_replaced_ack
+            self._rack_replaced_ack = False
+            return ack
+
     # ── Data update ───────────────────────────────────────────────────────
 
     def update(
@@ -924,5 +964,6 @@ class CampaignDashboard:
                 "next_suggestion":    next_suggestion,
                 "current_params":     self._current_params,
                 "qc_pre_experiment":  pre_qc,
+                "tip_rack":           self._tip_rack,
                 "dry_run":            self._dry_run,
             }

@@ -1392,9 +1392,13 @@ class SetupWizard:
         if not cam_ok and self._cam_proc is None:
             server_script = Path(__file__).parent.parent / "camera" / "server.py"
             if server_script.exists():
+                import autolab.config as _cfg
+                save_dir = str(_cfg.IMAGES_DIR)
+                Path(save_dir).mkdir(parents=True, exist_ok=True)
                 cmd = [sys.executable, str(server_script),
                        "--camera-index", str(camera_index),
-                       "--port",         str(camera_port)]
+                       "--port",         str(camera_port),
+                       "--save-dir",     save_dir]
                 try:
                     self._cam_proc = subprocess.Popen(cmd)
                     # Wait up to 8 s for server to come up
